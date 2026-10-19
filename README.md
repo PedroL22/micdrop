@@ -12,6 +12,12 @@ Cópia do app que o Funky mostrou [neste vídeo](https://youtu.be/6i3vDPOjexA).
   (escolhida pela duração), o clipe de fundo e as palavras sincronizadas. Se o vídeo
   adicionado for só áudio (canais "Topic"), o app procura o clipe oficial. Se não achar uma
   letra confiável, dá para escolher no player.
+- **Sempre a versão de rádio**: se o vídeo adicionado for um clipe com introdução ou cenas a
+  mais, o app descobre a duração oficial da música (a mais comum entre as letras do LRCLIB),
+  baixa o áudio da versão de rádio e usa o vídeo só como clipe de fundo.
+- **Clipe sincronizado sozinho**: o app compara o som do clipe com o da música e pula a
+  introdução do vídeo ("Sincronizar sozinho" no painel Tela refaz isso). Se o clipe tiver pausas
+  no meio, desligue-o só naquela música com "Clipe nesta música".
 - **Fila de processamento**: cada música é baixada e separada na GPU com o modelo
   **BS-Roformer** em duas etapas: (1) todas as vozes × instrumental, (2) voz principal × vocais de apoio.
 - **Sessão pelo celular**: QR code em "Entrar na sessão". Cada pessoa adiciona músicas, vê o

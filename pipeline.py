@@ -92,15 +92,29 @@ def _same(a, b):
     return bool(norm(a)) and norm(a) == norm(b)
 
 
+FEAT_PART = re.compile(r"(?i)\s*[\(\[]?\b(?:ft|feat|featuring)\b\.?\s+[^\(\)\[\]]+?[\)\]]?(?=\s*(?:[\(\[]?\b(?:ft|feat|featuring)\b|$))")
+
+
+def tidy_title(title):
+    """Espaços duplos e participações repetidas ("... ft. X ft. X" -> "... ft. X")."""
+    title = re.sub(r"\s+", " ", title or "").strip()
+    feats = FEAT_PART.findall(title)
+    if len(feats) > 1:
+        first = FEAT_PART.search(title)
+        title = title[: first.end()] + FEAT_PART.sub("", title[first.end():])
+    return title.strip()
+
+
 def clean_title(title, artist):
     """Tira o nome do artista quando ele vem grudado no título ("Música – Artista")."""
-    parts = DASH.split((title or "").strip(), maxsplit=1)
+    title = tidy_title(title)
+    parts = DASH.split(title, maxsplit=1)
     if len(parts) == 2 and artist:
         if _same(parts[1], artist):
             return parts[0].strip()
         if _same(parts[0], artist):
             return parts[1].strip()
-    return (title or "").strip()
+    return title
 
 
 def guess_artist_title(info):
@@ -228,6 +242,11 @@ def start_video_download(song_id, source_id):
             done = _fetch_video(folder, source_id,
                                 lambda p: _video_state(song_id, progress=round(min(p, 0.99), 2)))
             _video_state(song_id, **done)
+            audio_id = (get_song(song_id) or {}).get("audio_source") or song_id
+            if source_id == audio_id:
+                update_song(song_id, {"settings": {"video_offset": 0.0}})
+            else:
+                sync_clip(song_id)
         except Exception as exc:
             print(f"[clipe] erro em {song_id}: {exc}")
             _video_state(song_id, status="error", error=str(exc)[:300])
@@ -260,11 +279,125 @@ def _fetch_video(folder, source_id, on_progress=None):
             "file": os.path.basename(path), "title": info.get("title"), "duration": info.get("duration")}
 
 
+def _extract(vid):
+    """Dados do vídeo sem baixar."""
+    with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "noplaylist": True}) as ydl:
+        return ydl.extract_info(f"https://www.youtube.com/watch?v={vid}", download=False)
+
+
+NOT_RADIO = re.compile(r"(?i)\b(ao vivo|live|cover|karaok\w*|instrumental|remix|8d|slowed|reverb|sped up|"
+                       r"acoustic|acústico|acustico|extended|clipe|music video|official video)\b")
+
+
+def _find_radio_edit(artist, title, target, exclude):
+    """Procura no YouTube a versão de rádio: mesma música, duração igual à da letra (±3 s)."""
+    seen, best, best_score = {exclude}, None, None
+    for q in (f"{artist} {title} audio", f"{artist} {title}", f"{artist} {title} topic"):
+        try:
+            results = search_youtube(q, 8)
+        except Exception:
+            continue
+        for r in results:
+            if r["id"] in seen or not r["duration"]:
+                continue
+            seen.add(r["id"])
+            if NOT_RADIO.search(r["title"]) or lyrics._norm(lyrics.core_title(title)) not in lyrics._norm(r["title"]):
+                continue
+            diff = abs(r["duration"] - target)
+            if diff > 3:
+                continue
+            score = diff + (0 if lyrics._norm(artist) in lyrics._norm(r["channel"] + r["title"]) else 2)
+            if best_score is None or score < best_score:
+                best, best_score = r, score
+        if best and best_score <= 1:
+            break
+    return best
+
+
+def _to_wav(src, dst, rate=11025):
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", src, "-vn", "-ac", "1", "-ar", str(rate), dst],
+                   check=True)
+
+
+def _envelope(path, sr=11025, hop=256):
+    import librosa
+    import numpy as np
+
+    y, _ = librosa.load(path, sr=sr, mono=True)
+    e = librosa.onset.onset_strength(y=y, sr=sr, hop_length=hop)
+    return (e - e.mean()) / (e.std() + 1e-9)
+
+
+def _offset_between(song_path, clip_path, sr=11025, hop=256):
+    """Em que segundo do clipe a música começa (positivo = o clipe tem introdução).
+
+    Compara o "ritmo" (força dos ataques) dos dois áudios por correlação cruzada.
+    Retorna None se a semelhança for fraca (clipe com outra versão da música)."""
+    import numpy as np
+
+    a, b = _envelope(song_path, sr, hop), _envelope(clip_path, sr, hop)
+    n = 1 << int(np.ceil(np.log2(len(a) + len(b))))
+    corr = np.fft.irfft(np.fft.rfft(b, n) * np.conj(np.fft.rfft(a, n)), n)
+    fps = sr / hop
+    lags = np.arange(n)
+    lags[lags > n // 2] -= n  # índices do fim = atrasos negativos
+    ok = (lags >= -30 * fps) & (lags <= min(len(b), 300 * fps))
+    corr, lags = corr[ok], lags[ok]
+    i = int(np.argmax(corr))
+    z = (corr[i] - corr.mean()) / (corr.std() + 1e-9)
+    if z < 6:
+        return None
+    return round(float(lags[i] / fps), 2)
+
+
+def clip_offset(folder, clip_id, audio_id):
+    """Baixa só o áudio do clipe e mede quanto ele está adiantado/atrasado em relação à música."""
+    if clip_id == audio_id:
+        return 0.0
+    tmp = os.path.join(folder, "_clip_audio")
+    os.makedirs(tmp, exist_ok=True)
+    try:
+        opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "noprogress": True,
+                "format": "bestaudio/best", "outtmpl": os.path.join(tmp, "a.%(ext)s")}
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(f"https://www.youtube.com/watch?v={clip_id}", download=True)
+            src = ydl.prepare_filename(info)
+        _to_wav(src, os.path.join(tmp, "clip.wav"))
+        _to_wav(os.path.join(folder, "original.flac"), os.path.join(tmp, "song.wav"))
+        return _offset_between(os.path.join(tmp, "song.wav"), os.path.join(tmp, "clip.wav"))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def sync_clip(song_id):
+    """Recalcula em segundo plano o atraso do clipe (pula a introdução do vídeo)."""
+    meta = get_song(song_id)
+    video = (meta or {}).get("video") or {}
+    if video.get("status") != "ready" or video.get("sync") == "running":
+        return meta
+    _video_state(song_id, sync="running", sync_error=None)
+
+    def run():
+        try:
+            off = clip_offset(song_dir(song_id), video["source"], meta.get("audio_source") or song_id)
+            if off is None:
+                _video_state(song_id, sync="error", sync_error="O som do clipe não bate com a música")
+                return
+            _video_state(song_id, sync="done", offset=off)
+            update_song(song_id, {"settings": {"video_offset": off}})
+        except Exception as exc:
+            print(f"[clipe] erro ao sincronizar {song_id}: {exc}")
+            _video_state(song_id, sync="error", sync_error=str(exc)[:200])
+
+    threading.Thread(target=run, daemon=True, name=f"clipsync-{song_id}").start()
+    return get_song(song_id)
+
+
 NOT_A_CLIP = re.compile(r"(?i)\b(lyrics?|letra|legendad[oa]|audio|áudio|ao vivo|live|cover|karaok\w*|"
                         r"instrumental|remix|8d|slowed|reverb|sped up)\b")
 
 
-OFFICIAL = re.compile(r"(?i)(official|oficial|videoclipe|clipe|music video|m/v|mv)")
+OFFICIAL = re.compile(r"(?i)(official|oficial|videoclipe|clipe|music video|m/v|\bmv\b)")
 
 
 def _pick_clip(info, artist, title, duration):
@@ -519,8 +652,8 @@ def _set(job, **kw):
         job.update(kw)
 
 
-def _download(job, folder):
-    vid = job["video_id"]
+def _download(job, folder, vid=None):
+    vid = vid or job["video_id"]
 
     def hook(d):
         if job.get("_cancel"):
@@ -614,35 +747,63 @@ def _process(job):
     vid = job["video_id"]
     folder = os.path.join(DATA, vid)
     os.makedirs(folder, exist_ok=True)
-    _set(job, status="running", stage="Baixando do YouTube...", progress=0.0)
-    info = _download(job, folder)
+    _set(job, status="running", stage="Lendo o vídeo...", progress=0.0)
+    info = _extract(vid)
     artist, title = guess_artist_title(info)
     duration = info.get("duration") or job["duration"]
 
-    # clipe de fundo: baixa em paralelo enquanto a placa de vídeo trabalha
+    # letras do LRCLIB: a duração mais comum entre elas é a da versão de rádio (do álbum)
+    _set(job, stage="Buscando a letra...", progress=0.0)
+    lyr, item, cands, official = None, None, [], None
+    try:
+        cands = lyrics.candidates(artist, title)
+        official = lyrics.official_duration(artist, title, cands)
+        print(f"[radio] {vid}: duração oficial {official}s, vídeo {duration}s")
+    except Exception as exc:
+        print(f"[letra] busca falhou para {vid}: {exc}")
+
+    # o vídeo adicionado é mais longo/curto que a versão de rádio (introdução, cenas...):
+    # o áudio vem da versão de rádio e o vídeo vira só o clipe de fundo
+    audio_id = vid
+    if official and abs(official - duration) > 4:
+        _set(job, stage="Procurando a versão de rádio...", progress=0.0)
+        radio = _find_radio_edit(artist, lyrics.core_title(title), official, vid)
+        if radio:
+            print(f"[radio] {vid}: usando o áudio de {radio['id']} ({radio['title']}, {radio['duration']}s)")
+            audio_id, duration = radio["id"], radio["duration"]
+        else:
+            print(f"[radio] {vid}: versão de rádio não encontrada, usando o áudio do vídeo")
+
+    # a letra escolhida tem de combinar com o áudio que vai tocar
+    item = lyrics.pick_best(cands, artist, title, duration, max_diff=4) or         lyrics.pick_best(cands, artist, title, duration, max_diff=8)
+    if item:
+        lyr = lyrics.build(item)
+        title, artist = lyrics.names_for(item, title, artist)
+        title = clean_title(JUNK.sub("", title).strip(), artist)
+
+    _set(job, stage="Baixando a música...", progress=0.0)
+    audio_info = _download(job, folder, audio_id)
+    duration = audio_info.get("duration") or duration
+
+    # clipe de fundo: baixa (e acha onde a música começa nele) enquanto a placa de vídeo trabalha
     clip = {}
 
     def get_clip():
         try:
-            clip.update(_fetch_video(folder, _pick_clip(info, artist, title, duration)))
+            if audio_id != vid:
+                clip_id = vid  # o vídeo que a pessoa escolheu
+            else:
+                clip_id = _pick_clip(info, artist, title, duration)
+            clip.update(_fetch_video(folder, clip_id))
+            off = clip_offset(folder, clip_id, audio_id)
+            clip["offset"] = off or 0.0
+            clip["sync"] = "done" if off is not None else "error"
         except Exception as exc:
             print(f"[clipe] erro em {vid}: {exc}")
             clip.update(source=vid, status="error", error=str(exc)[:300])
 
     clip_thread = threading.Thread(target=get_clip, daemon=True, name=f"clip-{vid}")
     clip_thread.start()
-
-    # letra sincronizada (escolhida sozinha; se não achar, dá para escolher no player)
-    _set(job, stage="Buscando a letra...", progress=0.0)
-    lyr = None
-    try:
-        item = lyrics.find_for(artist, title, duration)
-        if item:
-            lyr = lyrics.build(item)
-            artist = item.get("artistName") or artist
-            title = clean_title(item.get("trackName") or title, artist)
-    except Exception as exc:
-        print(f"[letra] não achou para {vid}: {exc}")
 
     _set(job, stage="Aguardando a placa de vídeo...", progress=0.0)
     with GPU_LOCK:
@@ -674,17 +835,16 @@ def _process(job):
         "artist": artist or job["channel"],
         "video_title": info.get("title") or job["title"],
         "channel": info.get("channel") or job["channel"],
-        "duration": info.get("duration") or job["duration"],
+        "duration": duration,
         "thumbnail": thumb_url(vid),
         "cover": None,
         "key": res.get("key", "C"),
         "scale": res.get("scale", "Major"),
         "lyrics": lyr,
         "video": video,
+        "audio_source": audio_id,
         "offset": 0.0,
-        "settings": {"mode": "instrumental", "backing": 1.0, "lead": 0.0,
-                     "blur": 0.5, "brightness": 0.85, "video_offset": 0,
-                     "bg": "video" if video else "cover"},
+        "settings": {"video_offset": (video or {}).get("offset", 0.0)},
         "owner": job.get("owner"),
         "owner_name": job.get("owner_name"),
         "created": time.time(),

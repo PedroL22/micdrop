@@ -313,6 +313,16 @@ function ClipTab({ song, onSong }: { song: Song; onSong: (s: Song) => void }) {
             <Check className="size-4 text-emerald-400" /> <span className="truncate">{v.title || v.source}</span>
           </p>
         )}
+        {v?.status === "ready" && v.sync === "running" && (
+          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="size-3 animate-spin" /> Achando onde a música começa no clipe...
+          </p>
+        )}
+        {v?.status === "ready" && v.sync === "error" && (
+          <p className="text-xs text-muted-foreground">
+            Não deu para sincronizar sozinho ({v.sync_error || "som diferente"}). Ajuste o atraso no painel Tela ou desligue o clipe nesta música.
+          </p>
+        )}
         {v?.status === "error" && <p className="text-destructive">Erro ao baixar o clipe: {v.error}</p>}
         <div className="flex flex-wrap gap-2">
           <Button size="sm" variant="secondary" onClick={() => use(song.id)} disabled={v?.status === "downloading"}>

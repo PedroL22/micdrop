@@ -110,17 +110,17 @@ def _norm(s):
     return re.sub(r"[^a-z0-9]", "", "".join(c for c in s if not unicodedata.combining(c)))
 
 
-def pick_best(items, artist, title, duration):
+def pick_best(items, artist, title, duration, max_diff=8):
     """Melhor letra para a música: sincronizada, mesmo artista e duração parecida.
 
     Retorna None se nada for confiável (aí o usuário escolhe na mão no player)."""
-    want_artist, want_title = _norm(artist), _norm(title)
+    want_artist, want_title = _norm(artist), _norm(core_title(title))
     best, best_score = None, None
     for item in items:
         diff = abs((item.get("duration") or 0) - (duration or 0)) if duration else 0
-        if duration and diff > 8:  # outra versão (ao vivo, remix...)
+        if duration and max_diff is not None and diff > max_diff:  # outra versão (ao vivo, remix...)
             continue
-        got_artist, got_title = _norm(item.get("artistName")), _norm(item.get("trackName"))
+        got_artist, got_title = _norm(item.get("artistName")), _norm(core_title(item.get("trackName")))
         artist_ok = bool(want_artist) and (want_artist in got_artist or got_artist in want_artist)
         title_ok = bool(want_title) and (want_title in got_title or got_title in want_title)
         if not (artist_ok or title_ok):
@@ -145,12 +145,97 @@ def names_for(item, title, artist):
     return title, artist
 
 
-def find_for(artist, title, duration):
-    """Busca e escolhe sozinho. Tenta "artista + música" e depois só o nome da música."""
+FEAT = re.compile(r"(?i)\s*[\(\[]?\b(ft|feat|featuring)\b\.?.*$")
+
+
+def core_title(title):
+    """'Beauty And A Beat ft. Nicki Minaj' -> 'Beauty And A Beat' (participações atrapalham a busca)."""
+    return FEAT.sub("", title or "").strip() or (title or "")
+
+
+def candidates(artist, title):
+    """Todas as letras do LRCLIB que parecem ser desta música (mesmo artista ou mesmo nome)."""
+    out, seen = [], set()
+    want_artist, want_title = _norm(artist), _norm(core_title(title))
+    for q in (f"{artist} {core_title(title)}".strip(), core_title(title)):
+        if not q:
+            continue
+        for item in search(q):
+            if item["id"] in seen:
+                continue
+            seen.add(item["id"])
+            got_artist, got_title = _norm(item.get("artistName")), _norm(core_title(item.get("trackName")))
+            artist_ok = bool(want_artist) and (want_artist in got_artist or got_artist in want_artist)
+            title_ok = bool(want_title) and (want_title in got_title or got_title in want_title)
+            if artist_ok and title_ok:
+                out.append(item)
+        if out:
+            break
+    return out
+
+
+def typical_duration(items):
+    """Duração "oficial" pelas letras do LRCLIB: a mais votada.
+
+    Muita gente sincroniza a letra com o clipe do YouTube, então as letras com nome de álbum de
+    verdade valem mais e, no empate, ganha a mais curta (versões de rádio costumam ser mais curtas)."""
+    entries = []
+    for i in items:
+        d = i.get("duration") or 0
+        if not d:
+            continue
+        album = _norm(i.get("albumName"))
+        real_album = bool(album) and album != _norm(i.get("trackName")) and album != _norm(core_title(i.get("trackName")))
+        entries.append((d, 2 if real_album else 1))
+    if not entries:
+        return None
+    votes = lambda d: sum(w for x, w in entries if abs(x - d) <= 2)
+    return max((d for d, _ in entries), key=lambda d: (votes(d), -d))
+
+
+NOT_ALBUM_VERSION = re.compile(r"(?i)\b(live|ao vivo|remix|acoustic|ac[uú]stico|instrumental|karaoke|version|edit)\b")
+
+
+def itunes_duration(artist, title):
+    """Duração da faixa no iTunes (versão do álbum). None se não achar com segurança."""
+    try:
+        r = requests.get("https://itunes.apple.com/search", headers=UA, timeout=15, params={
+            "term": f"{artist} {core_title(title)}", "media": "music", "entity": "song", "limit": 15})
+        r.raise_for_status()
+        results = r.json().get("results", [])
+    except Exception:
+        return None
+    want_artist, want_title = _norm(artist), _norm(core_title(title))
+    durs = []
+    for t in results:
+        name = t.get("trackName") or ""
+        if NOT_ALBUM_VERSION.search(name) or not t.get("trackTimeMillis"):
+            continue
+        got_artist, got_title = _norm(t.get("artistName")), _norm(core_title(name))
+        if not (want_artist and (want_artist in got_artist or got_artist in want_artist)):
+            continue
+        if got_title != want_title:
+            continue
+        durs.append(round(t["trackTimeMillis"] / 1000))
+    if not durs:
+        return None
+    return max(durs, key=lambda d: (sum(1 for x in durs if abs(x - d) <= 2), -d))
+
+
+def official_duration(artist, title, items):
+    """Duração da versão de rádio/álbum: iTunes primeiro, letras do LRCLIB como plano B."""
+    return itunes_duration(artist, title) or typical_duration(items)
+
+
+def find_for(artist, title, duration, max_diff=8):
+    """Busca e escolhe sozinho. Tenta "artista + música" e depois só o nome da música.
+
+    max_diff=None aceita qualquer duração (útil quando o vídeo tem introdução e a letra é
+    da versão de rádio)."""
     for q in (f"{artist} {title}".strip(), title):
         if not q:
             continue
-        found = pick_best(search(q), artist, title, duration)
+        found = pick_best(search(q), artist, title, duration, max_diff)
         if found:
             return found
     return None
