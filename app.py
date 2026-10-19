@@ -350,7 +350,19 @@ def cover_use(song_id):
     r.raise_for_status()
     with open(os.path.join(pipeline.song_dir(song_id), "cover.jpg"), "wb") as f:
         f.write(r.content)
-    return jsonify(public_song(pipeline.update_song(song_id, {"cover": "cover.jpg", "cover_v": int(time.time())})))
+    # cover_url: de onde veio, para a tela marcar qual capa está em uso
+    return jsonify(public_song(pipeline.update_song(
+        song_id, {"cover": "cover.jpg", "cover_v": int(time.time()), "cover_url": url})))
+
+
+@app.delete("/api/songs/<song_id>/cover")
+def cover_remove(song_id):
+    if not pipeline.get_song(song_id):
+        abort(404)
+    path = os.path.join(pipeline.song_dir(song_id), "cover.jpg")
+    if os.path.exists(path):
+        os.remove(path)
+    return jsonify(public_song(pipeline.update_song(song_id, {"cover": None, "cover_url": None})))
 
 
 # ---------------------------------------------------------------- clipe de fundo

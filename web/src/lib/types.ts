@@ -61,6 +61,7 @@ export type Song = {
   thumbnail: string
   cover: string | null
   cover_v?: number
+  cover_url?: string | null
   key: string
   scale: string
   lyrics: Lyrics | null

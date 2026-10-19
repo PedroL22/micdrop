@@ -207,31 +207,64 @@ function CoverTab({ song, onSong }: { song: Song; onSong: (s: Song) => void }) {
       setUsing("")
     }
   }
+  async function remove() {
+    try {
+      onSong(await api<Song>(`/api/songs/${song.id}/cover`, { method: "DELETE" }))
+      toast.success("Capa removida")
+    } catch (e) {
+      toast.error((e as Error).message)
+    }
+  }
+
+  const current = song.cover ? `/media/${song.id}/cover.jpg?v=${song.cover_v || 0}` : `https://i.ytimg.com/vi/${song.id}/hqdefault.jpg`
 
   return (
     <div className="flex h-full flex-col gap-3 pt-2">
+      <div className="flex items-center gap-3 rounded-lg bg-muted/60 p-3">
+        <img src={current} alt="Capa atual" className="size-16 shrink-0 rounded-md object-cover ring-2 ring-primary" />
+        <div className="min-w-0 flex-1 text-sm">
+          <p className="font-medium">Capa em uso</p>
+          <p className="text-xs text-muted-foreground">
+            {song.cover ? "Escolhida por você." : "Nenhuma escolhida: usando a imagem do YouTube."} Aparece de fundo quando não há
+            clipe e na biblioteca.
+          </p>
+        </div>
+        {song.cover && (
+          <Button size="sm" variant="ghost" onClick={remove}>
+            <Trash2 /> Remover
+          </Button>
+        )}
+      </div>
       <SearchBox {...s} go={() => s.go()} placeholder="Artista e álbum" />
-      <p className="text-xs text-muted-foreground">Aparece de fundo quando não há clipe e na biblioteca.</p>
       {s.loading && <Loading />}
       {s.error && <ErrorBox message={s.error} retry={() => s.go()} />}
       <div className="-mr-2 min-h-0 flex-1 overflow-y-auto pr-2">
         <div className="grid grid-cols-3 gap-2">
-          {(s.items || []).map(it => (
-            <button
-              key={it.full}
-              type="button"
-              title={`${it.artist || ""} — ${it.album || ""}`}
-              onClick={() => use(it)}
-              className="relative overflow-hidden rounded-md ring-primary transition hover:ring-2 focus-visible:ring-2"
-            >
-              <img src={it.thumb} alt="" loading="lazy" className="aspect-square w-full object-cover" />
-              {using === it.full && (
-                <span className="absolute inset-0 grid place-items-center bg-black/60">
-                  <Loader2 className="size-5 animate-spin" />
-                </span>
-              )}
-            </button>
-          ))}
+          {(s.items || []).map(it => {
+            const inUse = !!song.cover && song.cover_url === it.full
+            return (
+              <button
+                key={it.full}
+                type="button"
+                title={`${it.artist || ""} — ${it.album || ""}${inUse ? " (em uso)" : ""}`}
+                onClick={() => !inUse && use(it)}
+                aria-pressed={inUse}
+                className={`relative overflow-hidden rounded-md ring-primary transition hover:ring-2 focus-visible:ring-2 ${inUse ? "ring-3" : ""}`}
+              >
+                <img src={it.thumb} alt="" loading="lazy" className="aspect-square w-full object-cover" />
+                {inUse && (
+                  <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-primary py-0.5 text-[11px] font-semibold text-primary-foreground">
+                    <Check className="size-3" /> Em uso
+                  </span>
+                )}
+                {using === it.full && (
+                  <span className="absolute inset-0 grid place-items-center bg-black/60">
+                    <Loader2 className="size-5 animate-spin" />
+                  </span>
+                )}
+              </button>
+            )
+          })}
         </div>
       </div>
     </div>
