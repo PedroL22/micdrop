@@ -120,6 +120,70 @@ def qr():
 
 # ---------------------------------------------------------------- API
 
+# Ajustes do player que valem para todas as músicas (ficam em data/_prefs.json)
+PLAYER_DEFAULTS = {"mode": "instrumental", "backing": 1.0, "lead": 0.0, "blur": 0.5,
+                   "brightness": 0.85, "bg": "video", "volume": 1.0}
+PREFS_FILE = os.path.join(pipeline.DATA, "_prefs.json")
+
+
+def load_prefs():
+    try:
+        with open(PREFS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+@app.get("/api/prefs")
+def prefs_get():
+    return jsonify({**PLAYER_DEFAULTS, **load_prefs()})
+
+
+@app.patch("/api/prefs")
+def prefs_update():
+    body = request.get_json(force=True)
+    player = load_prefs()
+    for k, v in body.items():
+        if k not in PLAYER_DEFAULTS:
+            continue
+        if k == "mode" and v not in ("instrumental", "original"):
+            continue
+        if k == "bg" and v not in ("cover", "video"):
+            continue
+        if k not in ("mode", "bg"):
+            v = max(0.0, min(1.0, float(v)))
+        player[k] = v
+    pipeline._write_json(PREFS_FILE, player)
+    return jsonify({**PLAYER_DEFAULTS, **player})
+
+
+@app.get("/api/art/<song_id>")
+def art(song_id):
+    """Imagem da música pelo nosso endereço (o navegador só deixa ler as cores assim).
+
+    Capa escolhida > miniatura do clipe > miniatura do vídeo da música."""
+    s = pipeline.get_song(song_id)
+    if not s:
+        abort(404)
+    folder = pipeline.song_dir(song_id)
+    if s.get("cover") and os.path.exists(os.path.join(folder, "cover.jpg")):
+        return send_file(os.path.join(folder, "cover.jpg"), max_age=0)
+    video = s.get("video") or {}
+    vid = video.get("source") if video.get("status") == "ready" else song_id
+    if not pipeline.VIDEO_ID_RE.match(vid or ""):
+        vid = song_id
+    path = os.path.join(folder, f"thumb_{vid}.jpg")
+    if not os.path.exists(path):
+        try:
+            r = requests.get(f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg", headers=UA, timeout=15)
+            r.raise_for_status()
+            with open(path, "wb") as f:
+                f.write(r.content)
+        except Exception:
+            abort(404)
+    return send_file(path, max_age=3600)
+
+
 @app.get("/api/info")
 def info():
     return jsonify(session_url=session_url(), admin=is_admin(),

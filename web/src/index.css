@@ -145,6 +145,9 @@
     --sing: #ffd54f; /* cor que pinta as palavras já cantadas */
 }
 
+/* a cor do tema muda suavemente ao trocar de música */
+body { transition: background-color .6s ease; }
+
 /* ------------------------------------------------------------ letra */
 .lyrics-mask {
     -webkit-mask-image: linear-gradient(transparent, #000 12%, #000 88%, transparent);

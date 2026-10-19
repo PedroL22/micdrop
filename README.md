@@ -19,6 +19,11 @@ Cópia do app que o Funky mostrou [neste vídeo](https://youtu.be/6i3vDPOjexA).
 - **Biblioteca** com pesquisa, prévia, trocar letra 🎤, trocar arte 🖼️, apagar 🗑️ e o **tom** detectado
   (ex.: `A# Major`). Aparece `sem letra` até você escolher uma.
 - **Letra sincronizada** do [LRCLIB](https://lrclib.net) e **capas** do iTunes.
+- **Ajustes valem para todas as músicas**: vozes, volume, desfoque, brilho e fundo (capa/clipe)
+  ficam salvos e são usados em qualquer música. Só a sincronia da letra, o atraso do clipe e o tom
+  são de cada música.
+- **Cor do tema da capa**: no player, botões, sliders, fundo e o preenchimento das palavras ganham a
+  cor marcante da capa (ou do clipe).
 - **Player**: Original / Instrumental, volume dos vocais de suporte e dos vocais originais,
   desfoque do fundo, brilho do texto, ajuste de sincronia (±0,1 s / ±0,5 s ou "Sync com mouse")
   e tela cheia (os controles aparecem quando o mouse vai para a parte de baixo).
