@@ -8,13 +8,15 @@ import io
 import json
 import os
 import re
+import shutil
 import socket
+import subprocess
 import time
 import webbrowser
 
 import requests
 import segno
-from flask import Flask, abort, jsonify, render_template, request, send_file
+from flask import Flask, abort, jsonify, request, send_file, send_from_directory
 
 import lyrics
 import midi_control
@@ -22,12 +24,16 @@ import pipeline
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(ROOT, "config.json")
+WEB = os.path.join(ROOT, "web")          # interface (React + shadcn/ui)
+DIST = os.path.join(WEB, "dist")         # interface compilada
 UA = lyrics.UA
 
 with open(CONFIG_FILE, encoding="utf-8") as f:
     CONFIG = json.load(f)
 
-app = Flask(__name__)
+PORT = int(os.environ.get("KARAOKE_PORT") or CONFIG.get("port", 5000))
+
+app = Flask(__name__, static_folder=None)
 app.json.ensure_ascii = False
 
 
@@ -48,7 +54,7 @@ def lan_ip():
 
 
 def session_url():
-    return f"http://{lan_ip()}:{CONFIG.get('port', 5000)}/session"
+    return f"http://{lan_ip()}:{PORT}/session"
 
 
 def is_admin():
@@ -74,21 +80,35 @@ def public_song(s):
 
 # ---------------------------------------------------------------- páginas
 
+def spa():
+    """As três telas são o mesmo app React; ele escolhe a tela pelo endereço."""
+    path = os.path.join(DIST, "index.html")
+    if not os.path.exists(path):
+        return ("A interface ainda não foi compilada. Instale o Node.js e rode o "
+                "'Iniciar Karaoke.bat' de novo.", 503)
+    return send_file(path, max_age=0)
+
+
 @app.get("/")
 def index():
-    return render_template("index.html")
+    return spa()
 
 
 @app.get("/session")
 def session_page():
-    return render_template("session.html")
+    return spa()
 
 
 @app.get("/player/<song_id>")
 def player(song_id):
     if not pipeline.get_song(song_id):
         abort(404)
-    return render_template("player.html", song_id=song_id)
+    return spa()
+
+
+@app.get("/assets/<path:name>")
+def assets(name):
+    return send_from_directory(os.path.join(DIST, "assets"), name, max_age=31536000)
 
 
 @app.get("/qr.svg")
@@ -381,12 +401,35 @@ def midi_test():
 
 # ---------------------------------------------------------------- início
 
+def build_frontend():
+    """Compila a interface (web/) quando ela mudou desde a última compilação."""
+    built = os.path.join(DIST, "index.html")
+    sources = [os.path.join(WEB, f) for f in ("index.html", "package.json", "vite.config.ts")]
+    for base, _, files in os.walk(os.path.join(WEB, "src")):
+        sources += [os.path.join(base, f) for f in files]
+    newest = max((os.path.getmtime(p) for p in sources if os.path.exists(p)), default=0)
+    if os.path.exists(built) and os.path.getmtime(built) >= newest:
+        return
+    if not shutil.which("npm"):
+        print("  [interface] Node.js não encontrado: instale para compilar a interface (setup.ps1 faz isso).")
+        return
+    run = (lambda *a: subprocess.run(["cmd", "/c", "npm", *a], cwd=WEB, check=True)) if os.name == "nt"         else (lambda *a: subprocess.run(["npm", *a], cwd=WEB, check=True))
+    print("  [interface] Compilando a interface...")
+    try:
+        if not os.path.isdir(os.path.join(WEB, "node_modules")):
+            run("install", "--no-audit", "--no-fund")
+        run("run", "build")
+    except subprocess.CalledProcessError as exc:
+        print(f"  [interface] Falhou ao compilar ({exc}). Usando a versão anterior, se houver.")
+
+
 if __name__ == "__main__":
+    build_frontend()
     import logging
 
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
     pipeline.start(CONFIG)
-    port = int(CONFIG.get("port", 5000))
+    port = PORT
     print(f"\n  Karaokê rodando!\n  Neste PC:   http://localhost:{port}\n  Celulares:  {session_url()}\n")
     if os.environ.get("KARAOKE_NO_BROWSER") != "1":
         webbrowser.open(f"http://localhost:{port}")

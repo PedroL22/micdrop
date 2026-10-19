@@ -36,7 +36,7 @@ Cópia do app que o Funky mostrou [neste vídeo](https://youtu.be/6i3vDPOjexA).
 ## Instalar e abrir
 
 1. Dê dois cliques em **`Iniciar Karaoke.bat`**. Na primeira vez ele roda o `setup.ps1`, que instala
-   ffmpeg, Python 3.12, PyTorch com CUDA e o resto (uns 5 GB).
+   ffmpeg, Node.js, Python 3.12, PyTorch com CUDA e o resto (uns 5 GB), e compila a interface.
 2. O navegador abre em `http://localhost:5000`.
 3. A primeira música também baixa os dois modelos de IA (~1,5 GB, só uma vez).
 
@@ -91,7 +91,7 @@ Os números de CC e o canal também ficam no `config.json`.
 | `align.py` | descobre o tempo de cada palavra na voz isolada |
 | `lyrics.py` | letras do LRCLIB: busca, leitura do LRC e escolha automática |
 | `midi_control.py` | envio de nota/escala por MIDI |
-| `templates/`, `static/` | telas do PC, do celular e do player |
+| `web/` | interface (React + [shadcn/ui](https://ui.shadcn.com)): telas do PC, do celular e do player. O `app.py` recompila sozinho ao iniciar quando ela muda; para mexer com recarga ao vivo, rode `npm run dev` em `web/` (abre na porta 5173 e conversa com o servidor na 5000) |
 | `config.json` | porta, modelos, quantidade de resultados, MIDI |
 | `data/` | músicas processadas (uma pasta por vídeo) |
 | `models/` | modelos de IA baixados |

@@ -13,6 +13,12 @@ if (-not (Have ffmpeg)) {
     $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
 }
 
+if (-not (Have npm)) {
+    Write-Host "Instalando Node.js (para a interface)..."
+    winget install --id OpenJS.NodeJS.LTS -e --accept-source-agreements --accept-package-agreements
+    $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+}
+
 if (-not (Have uv)) {
     Write-Host "Instalando uv (gerenciador de Python)..."
     powershell -ExecutionPolicy Bypass -c "irm https://astral.sh/uv/install.ps1 | iex"
@@ -35,6 +41,12 @@ if (Have nvidia-smi) {
 
 Write-Host "Instalando o resto..."
 uv pip install --python $py -r requirements.txt
+
+Write-Host "Compilando a interface..."
+Push-Location web
+npm install --no-audit --no-fund
+npm run build
+Pop-Location
 
 & $py -c "import torch; print('GPU disponível:', torch.cuda.is_available())"
 Write-Host "Pronto! Agora é só abrir 'Iniciar Karaoke.bat'." -ForegroundColor Green

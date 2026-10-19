@@ -6,3 +6,7 @@ __pycache__/
 # músicas processadas e modelos de IA (grandes, baixados na hora)
 data/
 models/
+
+# interface: dependências e compilação (gerada ao iniciar)
+web/node_modules/
+web/dist/
