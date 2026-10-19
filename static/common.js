@@ -141,7 +141,7 @@ function queueRow(job) {
       <div class="meta">
         <div class="title">${esc(job.title)}</div>
         <div class="sub">${esc(job.channel)}${job.owner_name ? ` · <span class="who">${esc(job.owner_name)}</span>` : ""}</div>
-        <div class="stage ${err ? "err" : ""}" title="${esc(job.error || "")}">${esc(err ? "Erro: " + (job.error || "") : job.stage)}</div>
+        <div class="job-stage ${err ? "err" : ""}" title="${esc(job.error || "")}">${esc(err ? "Erro: " + (job.error || "") : job.stage)}</div>
         ${err ? "" : `<div class="progress"><div style="width:${Math.round(job.progress * 100)}%"></div></div>`}
       </div>
       ${err && job.mine ? `<button class="btn small retry">Tentar de novo</button>` : ""}

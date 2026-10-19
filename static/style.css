@@ -73,8 +73,8 @@ h2 input { max-width: 170px; font-size: 13px; padding: 6px 10px !important; font
 .queue-item { display: flex; gap: 8px; align-items: stretch; }
 .queue-item .item { flex: 1; padding: 14px; }
 .queue-item .item img.thumb { width: 96px; height: 54px; }
-.queue-item .stage { color: #c9cad3; font-size: 13px; margin-top: 4px; }
-.queue-item .stage.err { color: var(--danger); }
+.queue-item .job-stage { color: #c9cad3; font-size: 13px; margin-top: 4px; }
+.queue-item .job-stage.err { color: var(--danger); }
 .queue-item .x { background: var(--card-2); border: 0; border-radius: 8px; width: 44px; cursor: pointer; color: var(--muted); font-size: 18px; }
 .queue-item .x:hover { color: var(--text); background: #2a2e3a; }
 .who { color: var(--accent-2); }
