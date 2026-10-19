@@ -1,0 +1,8 @@
+# ambiente Python e caches
+venv/
+__pycache__/
+*.pyc
+
+# músicas processadas e modelos de IA (grandes, baixados na hora)
+data/
+models/

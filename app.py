@@ -1,0 +1,423 @@
+"""Karaokê caseiro: servidor web.
+
+Abra http://localhost:5000 no PC que toca o som. Os convidados entram pelo QR code
+(precisam estar no mesmo Wi-Fi) e colocam músicas na fila pelo celular.
+"""
+
+import io
+import json
+import os
+import re
+import socket
+import time
+import webbrowser
+
+import requests
+import segno
+from flask import Flask, abort, jsonify, render_template, request, send_file
+
+import midi_control
+import pipeline
+
+ROOT = os.path.dirname(os.path.abspath(__file__))
+CONFIG_FILE = os.path.join(ROOT, "config.json")
+UA = {"User-Agent": "KaraokeCaseiro/1.0 (https://github.com/)"}
+
+with open(CONFIG_FILE, encoding="utf-8") as f:
+    CONFIG = json.load(f)
+
+app = Flask(__name__)
+app.json.ensure_ascii = False
+
+
+def save_config():
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(CONFIG, f, ensure_ascii=False, indent=2)
+
+
+def lan_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("10.255.255.255", 1))  # não envia nada, só descobre a interface
+        return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        s.close()
+
+
+def session_url():
+    return f"http://{lan_ip()}:{CONFIG.get('port', 5000)}/session"
+
+
+def is_admin():
+    """Quem abre pelo próprio PC (o anfitrião) pode tudo; celulares só mexem no que é deles."""
+    return request.remote_addr in ("127.0.0.1", "::1", lan_ip())
+
+
+def token():
+    return request.args.get("token") or (request.get_json(silent=True) or {}).get("token")
+
+
+def can_touch(owner):
+    return is_admin() or (owner is not None and owner == token())
+
+
+def public_song(s):
+    s = dict(s)
+    s["mine"] = can_touch(s.pop("owner", None))
+    if s.get("lyrics"):
+        s["has_lyrics"] = True
+    return s
+
+
+# ---------------------------------------------------------------- páginas
+
+@app.get("/")
+def index():
+    return render_template("index.html")
+
+
+@app.get("/session")
+def session_page():
+    return render_template("session.html")
+
+
+@app.get("/player/<song_id>")
+def player(song_id):
+    if not pipeline.get_song(song_id):
+        abort(404)
+    return render_template("player.html", song_id=song_id)
+
+
+@app.get("/qr.svg")
+def qr():
+    buf = io.BytesIO()
+    segno.make(session_url(), error="m").save(buf, kind="svg", scale=8, border=2, dark="#000", light="#fff")
+    return app.response_class(buf.getvalue(), mimetype="image/svg+xml")
+
+
+# ---------------------------------------------------------------- API
+
+@app.get("/api/info")
+def info():
+    return jsonify(session_url=session_url(), admin=is_admin(),
+                   midi_device=CONFIG["midi"].get("device", ""),
+                   midi_devices=midi_control.list_devices(),
+                   notes=midi_control.NOTES,
+                   scales=CONFIG["midi"].get("scales", ["Major", "Minor"]))
+
+
+@app.get("/api/search")
+def search():
+    q = (request.args.get("q") or "").strip()
+    if not q:
+        return jsonify([])
+    try:
+        return jsonify(pipeline.search_youtube(q, CONFIG.get("search_results", 5)))
+    except Exception as exc:
+        return jsonify(error=f"Falha na busca: {exc}"), 502
+
+
+@app.get("/api/preview/<video_id>")
+def preview(video_id):
+    try:
+        path = pipeline.preview_clip(video_id, CONFIG.get("preview_seconds", 5))
+    except ValueError:
+        abort(400)
+    except Exception as exc:
+        return jsonify(error=f"Falha no preview: {exc}"), 502
+    return send_file(path, mimetype="audio/mpeg", max_age=3600)
+
+
+@app.get("/api/queue")
+def queue():
+    return jsonify(pipeline.public_jobs(token(), is_admin()))
+
+
+@app.post("/api/queue")
+def queue_add():
+    body = request.get_json(force=True)
+    entry = body.get("entry") or {}
+    try:
+        job, err = pipeline.add_job(entry, owner=body.get("token"), owner_name=body.get("name"))
+    except ValueError:
+        abort(400)
+    if err:
+        return jsonify(error=err), 409
+    return jsonify(id=job["id"])
+
+
+@app.delete("/api/queue/<job_id>")
+def queue_delete(job_id):
+    job = pipeline.find_job(job_id)
+    if not job:
+        abort(404)
+    if not can_touch(job.get("owner")):
+        return jsonify(error="Só quem adicionou pode remover essa música"), 403
+    pipeline.remove_job(job_id)
+    return jsonify(ok=True)
+
+
+@app.post("/api/queue/<job_id>/retry")
+def queue_retry(job_id):
+    job = pipeline.find_job(job_id)
+    if not job:
+        abort(404)
+    if not can_touch(job.get("owner")):
+        abort(403)
+    return jsonify(ok=pipeline.retry_job(job_id))
+
+
+@app.get("/api/songs")
+def songs():
+    return jsonify([public_song(s) for s in pipeline.list_songs()])
+
+
+@app.get("/api/songs/<song_id>")
+def song(song_id):
+    s = pipeline.get_song(song_id)
+    if not s:
+        abort(404)
+    return jsonify(public_song(s))
+
+
+EDITABLE = {"key", "scale", "offset", "settings", "title", "artist"}
+
+
+@app.patch("/api/songs/<song_id>")
+def song_update(song_id):
+    body = request.get_json(force=True)
+    changes = {k: v for k, v in body.items() if k in EDITABLE}
+    s = pipeline.update_song(song_id, changes)
+    if not s:
+        abort(404)
+    if "key" in changes or "scale" in changes:
+        midi_control.send_key(CONFIG["midi"], s["key"], s["scale"])
+    return jsonify(public_song(s))
+
+
+@app.delete("/api/songs/<song_id>")
+def song_delete(song_id):
+    s = pipeline.get_song(song_id)
+    if not s:
+        abort(404)
+    if not can_touch(s.get("owner")):
+        return jsonify(error="Só quem adicionou pode apagar essa música"), 403
+    pipeline.delete_song(song_id)
+    return jsonify(ok=True)
+
+
+@app.post("/api/songs/<song_id>/midi")
+def song_midi(song_id):
+    s = pipeline.get_song(song_id)
+    if not s:
+        abort(404)
+    return jsonify(sent=midi_control.send_key(CONFIG["midi"], s["key"], s["scale"]))
+
+
+@app.get("/media/<song_id>/<name>")
+def media(song_id, name):
+    stems = {f"{stem}.flac" for stem in pipeline.STEMS} | {"cover.jpg", "video.mp4", "video.webm"}
+    if name not in stems:
+        abort(404)
+    try:
+        path = os.path.join(pipeline.song_dir(song_id), name)
+    except ValueError:
+        abort(400)
+    if not os.path.exists(path):
+        abort(404)
+    return send_file(path, conditional=True, max_age=0)
+
+
+# ---------------------------------------------------------------- letras (LRCLIB)
+
+LRC_LINE = re.compile(r"\[(\d+):(\d+(?:\.\d+)?)\]")
+
+
+def parse_lrc(text):
+    lines = []
+    for raw in (text or "").splitlines():
+        stamps = LRC_LINE.findall(raw)
+        words = LRC_LINE.sub("", raw).strip()
+        for mm, ss in stamps:
+            if words:
+                lines.append({"t": int(mm) * 60 + float(ss), "text": words})
+    lines.sort(key=lambda l: l["t"])
+    return lines
+
+
+_lrc_cache = {}  # id do LRCLIB -> resultado completo da busca (já vem com a letra)
+
+
+def _lrclib_get(lrclib_id):
+    if lrclib_id in _lrc_cache:
+        return _lrc_cache[lrclib_id]
+    for attempt in range(3):
+        try:
+            r = requests.get(f"https://lrclib.net/api/get/{lrclib_id}", headers=UA, timeout=15)
+            r.raise_for_status()
+            return r.json()
+        except Exception:
+            if attempt == 2:
+                raise
+            time.sleep(1.5)
+
+
+@app.get("/api/lyrics/search")
+def lyrics_search():
+    q = (request.args.get("q") or "").strip()
+    if not q:
+        return jsonify([])
+    try:
+        r = requests.get("https://lrclib.net/api/search", params={"q": q}, headers=UA, timeout=15)
+        r.raise_for_status()
+    except Exception as exc:
+        return jsonify(error=f"LRCLIB fora do ar? {exc}"), 502
+    out = []
+    for item in r.json():
+        if not (item.get("syncedLyrics") or item.get("plainLyrics")):
+            continue
+        _lrc_cache[item["id"]] = item
+        out.append({"id": item["id"], "track": item.get("trackName"),
+                    "artist": item.get("artistName"), "album": item.get("albumName"),
+                    "duration": item.get("duration") or 0,
+                    "synced": bool(item.get("syncedLyrics"))})
+    out.sort(key=lambda x: not x["synced"])  # sincronizadas primeiro
+    return jsonify(out)
+
+
+@app.post("/api/songs/<song_id>/lyrics")
+def lyrics_use(song_id):
+    if not pipeline.get_song(song_id):
+        abort(404)
+    lrclib_id = int(request.get_json(force=True).get("id"))
+    try:
+        item = _lrclib_get(lrclib_id)
+    except Exception as exc:
+        return jsonify(error=f"O LRCLIB não respondeu, tente de novo ({exc})"), 502
+    if item.get("syncedLyrics"):
+        lyrics = {"synced": True, "lines": parse_lrc(item["syncedLyrics"])}
+    else:
+        lines = [l.strip() for l in (item.get("plainLyrics") or "").splitlines() if l.strip()]
+        lyrics = {"synced": False, "lines": [{"t": None, "text": l} for l in lines]}
+    lyrics["source"] = f"lrclib:{lrclib_id}"
+    changes = {"lyrics": lyrics, "offset": 0.0}
+    if item.get("trackName"):
+        changes["title"] = item["trackName"]
+    if item.get("artistName"):
+        changes["artist"] = item["artistName"]
+    return jsonify(public_song(pipeline.update_song(song_id, changes)))
+
+
+@app.delete("/api/songs/<song_id>/lyrics")
+def lyrics_clear(song_id):
+    s = pipeline.update_song(song_id, {"lyrics": None})
+    if not s:
+        abort(404)
+    return jsonify(public_song(s))
+
+
+# ---------------------------------------------------------------- capas (iTunes)
+
+def _art(url, size=1000):
+    return re.sub(r"/\d+x\d+bb\.", f"/{size}x{size}bb.", url or "")
+
+
+@app.get("/api/covers/search")
+def covers_search():
+    q = (request.args.get("q") or "").strip()
+    if not q:
+        return jsonify([])
+    seen, out = set(), []
+    for entity in ("song", "album"):
+        try:
+            r = requests.get("https://itunes.apple.com/search",
+                             params={"term": q, "media": "music", "entity": entity, "limit": 25},
+                             headers=UA, timeout=15)
+            r.raise_for_status()
+            results = r.json().get("results", [])
+        except Exception:
+            continue
+        for item in results:
+            url = item.get("artworkUrl100")
+            if not url or url in seen:
+                continue
+            seen.add(url)
+            out.append({"thumb": _art(url, 300), "full": _art(url, 1000),
+                        "album": item.get("collectionName"), "artist": item.get("artistName")})
+    return jsonify(out[:30])
+
+
+@app.post("/api/songs/<song_id>/cover")
+def cover_use(song_id):
+    if not pipeline.get_song(song_id):
+        abort(404)
+    url = request.get_json(force=True).get("url") or ""
+    if not re.match(r"^https://[a-z0-9-]+\.mzstatic\.com/", url):
+        return jsonify(error="URL de capa inválida"), 400
+    r = requests.get(url, headers=UA, timeout=20)
+    r.raise_for_status()
+    with open(os.path.join(pipeline.song_dir(song_id), "cover.jpg"), "wb") as f:
+        f.write(r.content)
+    return jsonify(public_song(pipeline.update_song(song_id, {"cover": "cover.jpg", "cover_v": int(time.time())})))
+
+
+# ---------------------------------------------------------------- clipe de fundo
+
+@app.post("/api/songs/<song_id>/video")
+def video_use(song_id):
+    source = request.get_json(force=True).get("video_id") or song_id
+    try:
+        s = pipeline.start_video_download(song_id, source)
+    except ValueError:
+        abort(400)
+    if not s:
+        abort(404)
+    return jsonify(public_song(s))
+
+
+@app.delete("/api/songs/<song_id>/video")
+def video_remove(song_id):
+    s = pipeline.remove_video(song_id)
+    if not s:
+        abort(404)
+    return jsonify(public_song(s))
+
+
+# ---------------------------------------------------------------- MIDI
+
+@app.get("/api/midi/devices")
+def midi_devices():
+    return jsonify(devices=midi_control.list_devices(), device=CONFIG["midi"].get("device", ""))
+
+
+@app.post("/api/midi/device")
+def midi_device():
+    if not is_admin():
+        abort(403)
+    CONFIG["midi"]["device"] = request.get_json(force=True).get("device") or ""
+    save_config()
+    return jsonify(ok=True)
+
+
+@app.post("/api/midi/test")
+def midi_test():
+    which = request.get_json(force=True).get("which")
+    if which not in ("key", "scale"):
+        abort(400)
+    return jsonify(sent=midi_control.send_test(CONFIG["midi"], which))
+
+
+# ---------------------------------------------------------------- início
+
+if __name__ == "__main__":
+    import logging
+
+    logging.getLogger("werkzeug").setLevel(logging.WARNING)
+    pipeline.start(CONFIG)
+    port = int(CONFIG.get("port", 5000))
+    print(f"\n  Karaokê rodando!\n  Neste PC:   http://localhost:{port}\n  Celulares:  {session_url()}\n")
+    if os.environ.get("KARAOKE_NO_BROWSER") != "1":
+        webbrowser.open(f"http://localhost:{port}")
+    app.run(host="0.0.0.0", port=port, threaded=True, debug=False)

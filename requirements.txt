@@ -1,0 +1,11 @@
+flask>=3.0
+yt-dlp
+audio-separator[gpu]
+librosa
+soundfile
+numpy
+mido
+python-rtmidi
+segno
+requests
+audioread

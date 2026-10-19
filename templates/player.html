@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Karaoke · Player</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎤</text></svg>">
+</head>
+<body class="player">
+<div class="wrap">
+  <a class="back hide-fs" href="/">← voltar</a>
+  <h1 class="hide-fs" id="title">…</h1>
+
+  <div class="card picker hide-fs" id="lyricsPicker" hidden>
+    <h3>Escolha a letra <button class="btn small" data-close="lyricsPicker">fechar</button></h3>
+    <form class="row" id="lyricsForm">
+      <input type="text" id="lyricsQ" placeholder="Artista e música">
+      <button class="btn primary small">Buscar</button>
+    </form>
+    <div class="list" id="lyricsList"></div>
+  </div>
+
+  <div class="card picker hide-fs" id="coverPicker" hidden>
+    <h3>Escolha a capa <button class="btn small" data-close="coverPicker">fechar</button></h3>
+    <form class="row" id="coverForm">
+      <input type="text" id="coverQ" placeholder="Artista e álbum">
+      <button class="btn primary small">Buscar</button>
+    </form>
+    <div class="covers" id="coverList"></div>
+  </div>
+
+  <div class="card picker hide-fs" id="clipPicker" hidden>
+    <h3>Clipe de fundo <button class="btn small" data-close="clipPicker">fechar</button></h3>
+    <div class="row">
+      <button class="btn primary small" id="clipSame">Usar o vídeo desta música</button>
+      <button class="btn small" id="clipRemove" hidden>Remover clipe</button>
+    </div>
+    <div class="loading" id="clipStatus"></div>
+    <form class="row" id="clipForm" style="margin-top:12px">
+      <input type="text" id="clipQ" placeholder="Buscar outro vídeo no YouTube (ex.: clipe oficial)">
+      <button class="btn primary small">Buscar</button>
+    </form>
+    <div class="list" id="clipList"></div>
+  </div>
+
+  <div class="stage" id="stage">
+    <div class="art" id="art"></div>
+    <video class="bgvideo" id="bgVideo" muted playsinline preload="auto" hidden></video>
+    <div class="shade" id="shade"></div>
+    <div class="lyrics" id="lyrics"><div class="inner" id="lyricsInner"></div></div>
+    <div class="msg" id="msg">Carregando faixas...</div>
+  </div>
+
+  <div class="controls" id="controls">
+    <div class="ctl-row">
+      <div class="ctl seg">
+        <button class="btn" id="modeOriginal" title="Música original, com as vozes">Original</button>
+        <button class="btn" id="modeInstrumental" title="Sem a voz, com controle de cada parte">Instrumental</button>
+      </div>
+      <label class="ctl">Vocais de suporte <input type="range" id="volBacking" min="0" max="1" step="0.01"></label>
+      <label class="ctl">Vocais originais <input type="range" id="volLead" min="0" max="1" step="0.01"></label>
+      <label class="ctl">Nota <select id="note"></select></label>
+      <label class="ctl">Escala <select id="scale"></select></label>
+    </div>
+    <div class="ctl-row">
+      <label class="ctl">Desfoque do fundo <input type="range" id="blur" min="0" max="1" step="0.01"></label>
+      <label class="ctl">Brilho do texto <input type="range" id="brightness" min="0.2" max="1" step="0.01"></label>
+      <button class="ctl btn hide-fs" id="pickLyrics" title="Trocar letra">🎤 Letra</button>
+      <button class="ctl btn hide-fs" id="pickCover" title="Trocar arte de fundo">🖼️ Capa</button>
+      <button class="ctl btn hide-fs" id="pickClip" title="Usar o videoclipe de fundo">🎬 Clipe</button>
+    </div>
+    <div class="ctl-row">
+      <div class="ctl">Fundo
+        <button class="btn small" id="bgCover">Capa</button>
+        <button class="btn small" id="bgClip" title="Mostra o videoclipe atrás da letra">Clipe</button>
+      </div>
+      <div class="ctl" id="clipAdjust" hidden>Ajuste do clipe
+        <button class="btn small" data-vshift="-0.5">-0.5s</button>
+        <button class="btn small" data-vshift="-0.1">-0.1s</button>
+        <span class="off" id="videoOffset">0.0s</span>
+        <button class="btn small" data-vshift="0.1">+0.1s</button>
+        <button class="btn small" data-vshift="0.5">+0.5s</button>
+      </div>
+    </div>
+
+    <div class="transport">
+      <button id="playBtn" title="Tocar / pausar (espaço)">▶</button>
+      <span class="time" id="time">0:00 / 0:00</span>
+      <input type="range" id="seek" min="0" max="1000" value="0">
+      <span title="Volume geral">🔊</span>
+      <input type="range" class="vol" id="volMaster" min="0" max="1" step="0.01" value="1">
+    </div>
+
+    <div class="sync">
+      <div class="ctl">
+        <button class="btn" id="syncMouse" title="Clique aqui e depois clique na linha da letra no momento em que ela começa a ser cantada">Sync com mouse</button>
+        <button class="btn" data-shift="-0.5">-0.5s</button>
+        <button class="btn" data-shift="-0.1">-0.1s</button>
+        <span class="off" id="offset">0.0s</span>
+        <button class="btn" data-shift="0.1">+0.1s</button>
+        <button class="btn" data-shift="0.5">+0.5s</button>
+        <button class="btn" id="fsBtn" title="Tela cheia (F)">⛶</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>const SONG_ID = {{ song_id|tojson }};</script>
+<script src="/static/common.js"></script>
+<script src="/static/player.js"></script>
+</body>
+</html>
