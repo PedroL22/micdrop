@@ -84,7 +84,7 @@ function SongActions({ song, onChange }: { song: Song; onChange: () => void }) {
             <MoreVertical />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-44">
+        <DropdownMenuContent side="top" align="end" className="w-44">
           <DropdownMenuItem onSelect={() => openSong(song)}>
             <Mic /> Cantar
           </DropdownMenuItem>
