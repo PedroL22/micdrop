@@ -101,10 +101,18 @@ function renderLyrics() {
   lines.forEach((l, i) => {
     const d = document.createElement("div");
     d.className = "line";
-    d.textContent = l.text;
+    // cada palavra num <span>, para o preenchimento andar palavra por palavra
+    l.text.trim().split(/\s+/).forEach((word, k) => {
+      if (k) d.appendChild(document.createTextNode(" "));
+      const w = document.createElement("span");
+      w.className = "w";
+      w.textContent = word;
+      d.appendChild(w);
+    });
     d.onclick = () => onLineClick(i);
     inner.appendChild(d);
   });
+  estimates = {};
   lastIdx = -2;
   updateMsg();
 }
@@ -117,6 +125,92 @@ function updateMsg() {
     msg.innerHTML = `Sem letra<small>Escolha uma letra acima ou toque assim mesmo.</small>`;
   } else msg.hidden = true;
 }
+
+// ---------------------------------------------------------------- palavras
+
+let estimates = {};
+
+// Sem o tempo de cada palavra (ainda): reparte o tempo da linha pelo tamanho das palavras
+function estimateWords(i) {
+  if (estimates[i]) return estimates[i];
+  const words = lines[i].text.trim().split(/\s+/);
+  const chars = words.reduce((n, w) => n + w.length, 0);
+  const t0 = lines[i].t;
+  const next = i + 1 < lines.length ? lines[i + 1].t : t0 + 6;
+  const end = Math.max(t0 + 0.4, Math.min(next - 0.2, t0 + 0.6 + chars * 0.08));
+  let t = t0;
+  return (estimates[i] = words.map(w => {
+    const d = (end - t0) * Math.max(1, w.length) / Math.max(1, chars);
+    const span = [t, t + d];
+    t += d;
+    return span;
+  }));
+}
+
+let wipeIdx = -1;
+function updateWipe(idx, t) {
+  const lineEl = inner.children[idx];
+  if (wipeIdx !== idx) {
+    const old = inner.children[wipeIdx];
+    if (old) old.querySelectorAll(".w").forEach(w => w.style.removeProperty("--p"));
+    wipeIdx = idx;
+  }
+  if (!lineEl || idx < 0) return;
+  const times = lines[idx].w || estimateWords(idx);
+  const spans = lineEl.children;
+  for (let k = 0; k < spans.length && k < times.length; k++) {
+    const [s, e] = times[k];
+    const p = Math.max(0, Math.min(1, (t - s) / Math.max(0.05, e - s)));
+    const v = p.toFixed(3);
+    if (spans[k].dataset.p !== v) { spans[k].dataset.p = v; spans[k].style.setProperty("--p", v); }
+  }
+}
+
+function wordStatus() {
+  const el = $("#wordStatus");
+  const btn = $("#wordSync");
+  const lyr = song.lyrics;
+  btn.hidden = !(lyr && lyr.synced);
+  if (!lyr || !lyr.synced) { el.textContent = ""; return; }
+  const a = lyr.align || {};
+  if (a.status === "queued" || a.status === "running") {
+    el.textContent = `${a.stage || "Sincronizando palavras..."} ${Math.round((a.progress || 0) * 100)}%`;
+    btn.disabled = true;
+  } else {
+    btn.disabled = false;
+    if (a.status === "error") { el.textContent = "erro nas palavras"; el.title = a.error || ""; }
+    else if (lyr.words_source === "lrc") el.textContent = "palavras da letra ✓";
+    else if (lyr.words_source === "align") el.textContent = "palavras ✓";
+    else el.textContent = "palavras estimadas";
+  }
+}
+
+let wordPoll = null;
+async function watchWords() {
+  clearTimeout(wordPoll);
+  try {
+    const s = await api(`/api/songs/${SONG_ID}`);
+    const before = song.lyrics && song.lyrics.words_source;
+    song.lyrics = s.lyrics;
+    if (s.lyrics && s.lyrics.words_source && s.lyrics.words_source !== before) {
+      lines = s.lyrics.lines;   // mesmas linhas, agora com o tempo de cada palavra
+      estimates = {};
+      toast("Palavras sincronizadas!");
+    }
+  } catch (e) { /* tenta de novo */ }
+  wordStatus();
+  const st = song.lyrics && song.lyrics.align && song.lyrics.align.status;
+  if (st === "queued" || st === "running") wordPoll = setTimeout(watchWords, 1000);
+}
+
+$("#wordSync").onclick = async () => {
+  try {
+    const s = await api(`/api/songs/${SONG_ID}/words`, { method: "POST", body: {} });
+    song.lyrics = s.lyrics;
+    wordStatus();
+    watchWords();
+  } catch (e) { toast(e.message); }
+};
 
 function currentIndex(t) {
   let lo = 0, hi = lines.length - 1, ans = -1;
@@ -187,6 +281,7 @@ function tick() {
   if (synced && lines.length) {
     const idx = currentIndex(pos - song.offset);
     if (idx !== lastIdx) { lastIdx = idx; placeLyrics(idx); }
+    updateWipe(idx, pos - song.offset);
   }
   syncVideo(pos);
   requestAnimationFrame(tick);
@@ -367,6 +462,10 @@ function useSongLyrics() {
   lines = song.lyrics ? song.lyrics.lines : [];
   synced = !!(song.lyrics && song.lyrics.synced);
   renderLyrics();
+  wipeIdx = -1;
+  wordStatus();
+  const st = song.lyrics && song.lyrics.align && song.lyrics.align.status;
+  if (st === "queued" || st === "running") watchWords();
 }
 
 // ---------------------------------------------------------------- clipe de fundo

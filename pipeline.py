@@ -34,6 +34,7 @@ _lock = threading.RLock()
 _jobs = []          # fila (o primeiro "queued" é o próximo)
 _wake = threading.Event()
 _config = {}
+GPU_LOCK = threading.Lock()  # separação e alinhamento não rodam juntos (memória da placa)
 
 VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
@@ -50,15 +51,28 @@ def _write_json(path, obj):
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+    # No Windows, trocar o arquivo falha ("Acesso negado") se alguém estiver lendo
+    # ele naquele instante (a página consulta a cada segundo): tenta de novo.
+    for attempt in range(40):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == 39:
+                raise
+            time.sleep(0.05)
 
 
 def _read_json(path, default=None):
-    try:
-        with open(path, encoding="utf-8") as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return default
+    for attempt in range(20):
+        try:
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        except PermissionError:
+            time.sleep(0.05)  # sendo trocado neste instante
+        except (OSError, ValueError):
+            return default
+    return default
 
 
 JUNK = re.compile(
@@ -257,6 +271,92 @@ def remove_video(song_id):
         return update_song(song_id, {"video": None, "settings": settings})
 
 
+# ---------------------------------------------------------------- palavras (alinhamento)
+
+def _set_align(song_id, source, **kw):
+    """Atualiza o estado do alinhamento, se a letra ainda for a mesma."""
+    with _lock:
+        meta = get_song(song_id)
+        lyr = meta and meta.get("lyrics")
+        if not lyr or lyr.get("source") != source:
+            return False
+        lyr["align"] = {**(lyr.get("align") or {}), **kw}
+        update_song(song_id, {"lyrics": lyr})
+        return True
+
+
+def start_word_sync(song_id):
+    """Descobre o tempo de cada palavra em segundo plano (align.py na GPU)."""
+    meta = get_song(song_id)
+    lyr = (meta or {}).get("lyrics")
+    if not lyr or not lyr.get("synced") or not lyr.get("lines"):
+        return meta
+    if (lyr.get("align") or {}).get("status") in ("queued", "running"):
+        return meta
+    source = lyr.get("source")
+    _set_align(song_id, source, status="queued", progress=0.0, stage="Na fila da placa de vídeo",
+               error=None)
+    threading.Thread(target=_run_align, args=(song_id, source), daemon=True,
+                     name=f"align-{song_id}").start()
+    return get_song(song_id)
+
+
+def _run_align(song_id, source):
+    folder = song_dir(song_id)
+    inp = os.path.join(folder, "_align_in.json")
+    out = os.path.join(folder, "_align_out.json")
+    tail = []
+    code = -1
+    try:
+        with GPU_LOCK:
+            meta = get_song(song_id)
+            lyr = (meta or {}).get("lyrics")
+            if not lyr or lyr.get("source") != source:
+                return
+            _set_align(song_id, source, status="running", stage="Sincronizando palavras...")
+            _write_json(inp, {"lines": [{"t": l["t"], "text": l["text"]} for l in lyr["lines"]],
+                              "offset": meta.get("offset") or 0})
+            proc = subprocess.Popen(
+                [sys.executable, "-u", os.path.join(ROOT, "align.py"), folder, inp, out],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                encoding="utf-8", errors="replace", env=dict(os.environ, PYTHONIOENCODING="utf-8"),
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            last = -1.0
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                tail = (tail + [line])[-6:]
+                if line == "MODEL":
+                    _set_align(song_id, source, stage="Baixando modelo de palavras (só na primeira vez)...")
+                elif line.startswith("PROG:"):
+                    p = float(line[5:])
+                    if p - last >= 0.05 or p >= 1:
+                        last = p
+                        _set_align(song_id, source, progress=round(p, 2), stage="Sincronizando palavras...")
+            code = proc.wait()
+        if code != 0 or not os.path.exists(out):
+            raise RuntimeError(" | ".join(tail[-3:]) or f"código {code}")
+        words = _read_json(out, {}).get("words") or []
+        with _lock:
+            meta = get_song(song_id)
+            lyr = (meta or {}).get("lyrics")
+            if not lyr or lyr.get("source") != source:
+                return
+            for line, w in zip(lyr["lines"], words):
+                line["w"] = w
+            lyr["words_source"] = "align"
+            lyr["align"] = {"status": "done", "progress": 1.0}
+            update_song(song_id, {"lyrics": lyr})
+    except Exception as exc:
+        print(f"[palavras] erro em {song_id}: {exc}")
+        _set_align(song_id, source, status="error", error=str(exc)[:300])
+    finally:
+        for path in (inp, out):
+            if os.path.exists(path):
+                os.remove(path)
+
+
 def delete_song(song_id):
     path = song_dir(song_id)
     if os.path.isdir(path):
@@ -451,8 +551,10 @@ def _process(job):
     _set(job, status="running", stage="Baixando do YouTube...", progress=0.0)
     info = _download(job, folder)
     artist, title = guess_artist_title(info)
-    _set(job, stage="Preparando separação...", progress=0.0)
-    res = _separate(job, folder)
+    _set(job, stage="Aguardando a placa de vídeo...", progress=0.0)
+    with GPU_LOCK:
+        _set(job, stage="Preparando separação...", progress=0.0)
+        res = _separate(job, folder)
     meta = {
         "id": vid,
         "title": title or job["title"],
@@ -512,6 +614,11 @@ def start(config):
                 fixed = clean_title(meta.get("title"), meta.get("artist"))
                 if fixed and fixed != meta.get("title"):
                     update_song(meta["id"], {"title": fixed})
+            align = ((meta.get("lyrics") or {}).get("align") or {})
+            if align.get("status") in ("queued", "running"):  # fechou no meio: refaz
+                meta["lyrics"]["align"] = None
+                update_song(meta["id"], {"lyrics": meta["lyrics"]})
+                start_word_sync(meta["id"])
             if (meta.get("video") or {}).get("status") == "downloading":
                 _video_state(meta["id"], status="error", error="Download interrompido; tente de novo")
     threading.Thread(target=_worker, daemon=True, name="pipeline").start()

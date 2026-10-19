@@ -233,16 +233,47 @@ def media(song_id, name):
 # ---------------------------------------------------------------- letras (LRCLIB)
 
 LRC_LINE = re.compile(r"\[(\d+):(\d+(?:\.\d+)?)\]")
+LRC_WORD = re.compile(r"<(\d+):(\d+(?:\.\d+)?)>")
+
+
+def _word_times(body):
+    """LRC "enhanced": '<00:12.10> Que <00:12.40> bom' -> texto e [início, fim] de cada palavra."""
+    parts = LRC_WORD.split(body)
+    stamps, words, times = [], [], []
+    for i in range(1, len(parts), 3):
+        t = int(parts[i]) * 60 + float(parts[i + 1])
+        chunk = parts[i + 2].split()
+        stamps.append(t)
+        for w in chunk:
+            words.append(w)
+            times.append([t, None])
+    for k, wt in enumerate(times):
+        later = [s for s in stamps if s > wt[0]]
+        wt[1] = later[0] if later else wt[0] + 0.6
+        if k + 1 < len(times) and times[k + 1][0] > wt[0]:
+            wt[1] = min(wt[1], times[k + 1][0])
+    lead = parts[0].split()
+    if lead:  # texto antes da primeira marca: sem tempo próprio
+        return None, None
+    return " ".join(words), times
 
 
 def parse_lrc(text):
     lines = []
     for raw in (text or "").splitlines():
         stamps = LRC_LINE.findall(raw)
-        words = LRC_LINE.sub("", raw).strip()
+        body = LRC_LINE.sub("", raw).strip()
+        words = None
+        if LRC_WORD.search(body):
+            plain, words = _word_times(body)
+            body = plain if plain else LRC_WORD.sub("", body).strip()
+        body = re.sub(r"\s+", " ", body)
         for mm, ss in stamps:
-            if words:
-                lines.append({"t": int(mm) * 60 + float(ss), "text": words})
+            if body:
+                line = {"t": int(mm) * 60 + float(ss), "text": body}
+                if words and len(stamps) == 1:
+                    line["w"] = words
+                lines.append(line)
     lines.sort(key=lambda l: l["t"])
     return lines
 
@@ -310,13 +341,28 @@ def lyrics_use(song_id):
     else:
         lines = [l.strip() for l in (item.get("plainLyrics") or "").splitlines() if l.strip()]
         lyrics = {"synced": False, "lines": [{"t": None, "text": l} for l in lines]}
-    lyrics["source"] = f"lrclib:{lrclib_id}"
+    lyrics["source"] = f"lrclib:{lrclib_id}:{int(time.time())}"
+    if lyrics["synced"] and all(l.get("w") for l in lyrics["lines"]):
+        lyrics["words_source"] = "lrc"  # a própria letra já traz o tempo de cada palavra
     changes = {"lyrics": lyrics, "offset": 0.0}
     if item.get("trackName"):
-        changes["title"] = item["trackName"]
+        changes["title"] = pipeline.clean_title(item["trackName"], item.get("artistName"))
     if item.get("artistName"):
         changes["artist"] = item["artistName"]
-    return jsonify(public_song(pipeline.update_song(song_id, changes)))
+    s = pipeline.update_song(song_id, changes)
+    if lyrics["synced"] and not lyrics.get("words_source"):
+        s = pipeline.start_word_sync(song_id)
+    return jsonify(public_song(s))
+
+
+@app.post("/api/songs/<song_id>/words")
+def words_sync(song_id):
+    s = pipeline.get_song(song_id)
+    if not s:
+        abort(404)
+    if not (s.get("lyrics") or {}).get("synced"):
+        return jsonify(error="Escolha uma letra sincronizada primeiro"), 400
+    return jsonify(public_song(pipeline.start_word_sync(song_id)))
 
 
 @app.delete("/api/songs/<song_id>/lyrics")

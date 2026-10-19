@@ -10,6 +10,7 @@
   --danger: #e5484d;
   --ok: #3fb950;
   --radius: 10px;
+  --sing: #ffd54f;      /* cor que "pinta" as palavras já cantadas */
 }
 
 * { box-sizing: border-box; }
@@ -112,7 +113,14 @@ h2 input { max-width: 170px; font-size: 13px; padding: 6px 10px !important; font
 .lyrics .line { font-size: 17px; padding: 10px 0; color: rgba(255,255,255,var(--txt,.85));
   transition: color .3s, font-size .3s, opacity .3s; text-shadow: 0 1px 6px #000c; }
 .lyrics .line.past { opacity: .45; }
-.lyrics .line.active { font-size: 26px; font-weight: 700; color: #fff; opacity: 1; }
+.lyrics .line.active { font-size: 26px; font-weight: 700; color: #fff; opacity: 1;
+  text-shadow: none; filter: drop-shadow(0 1px 5px #000d); }
+/* preenchimento palavra por palavra, da esquerda para a direita */
+.lyrics .line.active .w {
+  color: transparent;
+  background: linear-gradient(90deg, var(--sing) calc(var(--p, 0) * 100%), #fff calc(var(--p, 0) * 100%));
+  -webkit-background-clip: text; background-clip: text;
+}
 .lyrics.static { overflow-y: auto; }
 .lyrics.static .line { padding: 6px 0; }
 .lyrics:not(.static) .line { cursor: pointer; }
@@ -145,6 +153,7 @@ h2 input { max-width: 170px; font-size: 13px; padding: 6px 10px !important; font
 .sync { display: flex; justify-content: center; }
 .sync .ctl { gap: 6px; }
 .sync .btn { padding: 3px 8px; font-size: 12px; }
+.word-status { font-size: 12px; color: var(--muted); min-width: 0; white-space: nowrap; }
 .ctl .off, .sync .off { width: 46px; text-align: center; font-variant-numeric: tabular-nums; }
 
 /* tela cheia */

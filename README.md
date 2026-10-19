@@ -19,6 +19,10 @@ Cópia do app que o Funky mostrou [neste vídeo](https://youtu.be/6i3vDPOjexA).
   desfoque do fundo, brilho do texto, ajuste de sincronia (±0,1 s / ±0,5 s ou "Sync com mouse")
   e tela cheia (os controles aparecem quando o mouse vai para a parte de baixo).
   **Clicar numa linha da letra pula a música para ela.**
+- **Palavra por palavra**: a linha atual vai sendo pintada da esquerda para a direita no ritmo
+  da voz. Ao escolher a letra, o app descobre o tempo de cada palavra ouvindo a voz isolada
+  (modelo MMS da Meta, na GPU; na primeira vez baixa ~1,2 GB). Se a letra do LRCLIB já tiver
+  o tempo de cada palavra, usa direto. O botão 🔤 Palavras refaz a sincronização.
 - **Clipe de fundo** (🎬): mostra o videoclipe, mudo e sincronizado com a música, atrás da letra.
   Use o vídeo da própria música ou busque outro (ex.: o clipe oficial, quando o áudio veio de uma
   versão "Topic"). Se o clipe tiver uma introdução diferente, acerte com "Ajuste do clipe".
@@ -80,6 +84,7 @@ Os números de CC e o canal também ficam no `config.json`.
 | `app.py` | servidor web (Flask) e API |
 | `pipeline.py` | fila: download, separação e tom |
 | `separate.py` | roda a separação na GPU (processo à parte) |
+| `align.py` | descobre o tempo de cada palavra na voz isolada |
 | `midi_control.py` | envio de nota/escala por MIDI |
 | `templates/`, `static/` | telas do PC, do celular e do player |
 | `config.json` | porta, modelos, quantidade de resultados, MIDI |
