@@ -27,12 +27,18 @@ import { Slider } from "@/components/ui/slider"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, cleanTitle, fmtTime, pct, wordsReady } from "@/lib/api"
 import type { Info, Settings, Song } from "@/lib/types"
+import { applyTheme, glowColor, themeFromImage, type Theme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
+import { goBack } from "@/lib/router"
 import { AudioEngine } from "@/player/engine"
 import { LyricsView } from "@/player/LyricsView"
 import { Pickers, type PickerTab } from "@/player/Pickers"
 
-const DEFAULTS: Settings = { mode: "instrumental", backing: 1, lead: 0, blur: 0.5, brightness: 0.85, bg: "cover", video_offset: 0 }
+const DEFAULTS: Settings = { mode: "instrumental", backing: 1, lead: 0, blur: 0.5, brightness: 0.85, bg: "video", video_offset: 0 }
+
+// Ajustes que valem para todas as músicas (guardados no servidor)
+type Prefs = Omit<Settings, "video_offset"> & { volume: number }
+const PREF_KEYS = ["mode", "backing", "lead", "blur", "brightness", "bg"] as const
 
 function SliderRow({ label, value, onChange, min = 0, disabled }: { label: string; value: number; onChange: (v: number) => void; min?: number; disabled?: boolean }) {
   return (
@@ -82,7 +88,7 @@ export default function Player({ songId }: { songId: string }) {
   const [playing, setPlaying] = useState(false)
   const [pos, setPos] = useState(0)
   const [seeking, setSeeking] = useState<number | null>(null)
-  const [volume, setVolume] = useState(1)
+  const [prefs, setPrefs] = useState<Prefs>({ ...DEFAULTS, volume: 1 })
   const [fs, setFs] = useState(false)
   const [showControls, setShowControls] = useState(false)
   const [armed, setArmed] = useState(false)
@@ -90,19 +96,22 @@ export default function Player({ songId }: { songId: string }) {
   const offsetRef = useRef(0)
   const videoRef = useRef<HTMLVideoElement>(null)
   const controlsRef = useRef<HTMLDivElement>(null)
-  const [glow, setGlow] = useState("transparent")
+  const [theme, setTheme] = useState<Theme | null>(null)
 
-  const settings: Settings = { ...DEFAULTS, ...(song?.settings || {}) }
+  // preferências gerais + o que é só desta música (atraso do clipe)
+  const settings: Settings = { ...DEFAULTS, ...prefs, video_offset: song?.settings?.video_offset || 0 }
   offsetRef.current = song?.offset || 0
 
   // ------------------------------------------------------------ carregar
   useEffect(() => {
     let alive = true
-    Promise.all([api<Song>(`/api/songs/${songId}`), api<Info>("/api/info")])
-      .then(([s, i]) => {
+    Promise.all([api<Song>(`/api/songs/${songId}`), api<Info>("/api/info"), api<Prefs>("/api/prefs")])
+      .then(([s, i, p]) => {
         if (!alive) return
         setSong(s)
         setInfo(i)
+        setPrefs(p)
+        engine.setVolume(p.volume ?? 1)
         document.title = `${cleanTitle(s.title, s.artist)} · MicDrop`
         const pick = new URLSearchParams(location.search).get("pick") as PickerTab | null
         if (pick) setPicker({ open: true, tab: pick })
@@ -121,12 +130,21 @@ export default function Player({ songId }: { songId: string }) {
       engine.pause()
     }
   }, [engine, songId])
+  // no modo de desenvolvimento o React desmonta e monta de novo: só fecha se não voltou
+  const mounted = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      setTimeout(() => !mounted.current && engine.close(), 500)
+    }
+  }, [engine])
 
   // mixagem
   useEffect(() => {
-    if (song) engine.setMix(settings)
+    engine.setMix(settings)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [engine, song?.settings])
+  }, [engine, prefs.mode, prefs.backing, prefs.lead])
 
   // tempo na tela (4x por segundo) + fim da música + clipe sincronizado
   useEffect(() => {
@@ -158,11 +176,7 @@ export default function Player({ songId }: { songId: string }) {
         setSong(cur => {
           if (!cur) return s
           const next = { ...cur, lyrics: s.lyrics, video: s.video }
-          if (cur.video?.status === "downloading" && s.video?.status === "ready") {
-            next.settings = { ...cur.settings, bg: "video" }
-            save({ settings: next.settings })
-            toast.success("Clipe pronto!")
-          }
+          if (cur.video?.status === "downloading" && s.video?.status === "ready") toast.success("Clipe pronto!")
           if (!wordsReady(cur) && wordsReady(s)) toast.success("Palavras sincronizadas!")
           return next
         })
@@ -174,32 +188,23 @@ export default function Player({ songId }: { songId: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [busy, songId])
 
-  // brilho colorido em volta do quadro, com a cor média da capa
+  // cor do tema a partir da capa (ou do clipe), usada no app todo enquanto o player está aberto
+  const artKey = song ? `${song.cover_v || 0}-${song.video?.status === "ready" ? song.video.source : ""}` : ""
   useEffect(() => {
     if (!song) return
-    const img = new window.Image()
-    if (!song.cover) img.crossOrigin = "anonymous"
-    img.onload = () => {
-      try {
-        const c = document.createElement("canvas")
-        c.width = c.height = 8
-        const g = c.getContext("2d")!
-        g.drawImage(img, 0, 0, 8, 8)
-        const d = g.getImageData(0, 0, 8, 8).data
-        let r = 0, gr = 0, b = 0
-        for (let i = 0; i < d.length; i += 4) {
-          r += d[i]
-          gr += d[i + 1]
-          b += d[i + 2]
-        }
-        const n = d.length / 4
-        setGlow(`rgba(${(r / n) | 0},${(gr / n) | 0},${(b / n) | 0},.5)`)
-      } catch {
-        /* imagem de outro site sem permissão */
-      }
+    let alive = true
+    themeFromImage(`/api/art/${song.id}?v=${artKey}`)
+      .then(t => {
+        if (!alive) return
+        setTheme(t)
+        applyTheme(t)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
     }
-    img.src = artUrl(song)
-  }, [song?.cover, song?.cover_v]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [artKey]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => () => applyTheme(null), [])
 
   // ------------------------------------------------------------ salvar ajustes
   const saveTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
@@ -217,11 +222,27 @@ export default function Player({ songId }: { songId: string }) {
     [songId],
   )
 
+  // preferências gerais: salvas no servidor e usadas em todas as músicas
+  const prefTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
+  const prefPending = useRef<Partial<Prefs>>({})
+  function setPref(changes: Partial<Prefs>) {
+    setPrefs(cur => ({ ...cur, ...changes }))
+    Object.assign(prefPending.current, changes)
+    clearTimeout(prefTimer.current)
+    prefTimer.current = setTimeout(() => {
+      const body = prefPending.current
+      prefPending.current = {}
+      api("/api/prefs", { method: "PATCH", body }).catch(e => toast.error(e.message))
+    }, 400)
+  }
+
   function setSetting<K extends keyof Settings>(key: K, value: Settings[K]) {
+    if ((PREF_KEYS as readonly string[]).includes(key)) return setPref({ [key]: value } as Partial<Prefs>)
+    // o resto (atraso do clipe) é desta música
     setSong(cur => {
       if (!cur) return cur
-      const next = { ...cur, settings: { ...DEFAULTS, ...cur.settings, [key]: value } }
-      save({ settings: next.settings })
+      const next = { ...cur, settings: { ...cur.settings, [key]: value } }
+      save({ settings: { [key]: value } as unknown as Settings })
       return next
     })
   }
@@ -350,11 +371,11 @@ export default function Player({ songId }: { songId: string }) {
       <Volume2 className="size-4 text-muted-foreground" />
       <Slider
         className="w-24"
-        value={[Math.round(volume * 100)]}
+        value={[Math.round(prefs.volume * 100)]}
         max={100}
         step={5}
         onValueChange={([v]) => {
-          setVolume(v / 100)
+          setPref({ volume: v / 100 })
           engine.setVolume(v / 100)
         }}
         aria-label="Volume geral"
@@ -376,13 +397,11 @@ export default function Player({ songId }: { songId: string }) {
   )
 
   return (
-    <div className={cn("mx-auto max-w-5xl space-y-4 px-4 py-5", fs && "overflow-hidden")}>
+    <div className={cn("mx-auto max-w-5xl animate-fade-in space-y-4 px-4 py-5", fs && "overflow-hidden")}>
       {/* topo */}
       <header className="flex items-center gap-3">
-        <IconButton label="Voltar para a biblioteca" asChild variant="ghost">
-          <a href="/">
-            <ArrowLeft />
-          </a>
+        <IconButton label="Voltar para a biblioteca" variant="ghost" onClick={() => goBack("/")}>
+          <ArrowLeft />
         </IconButton>
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-xl font-bold">{cleanTitle(song.title, song.artist)}</h1>
@@ -408,7 +427,11 @@ export default function Player({ songId }: { songId: string }) {
           "relative overflow-hidden bg-black",
           fs ? "fixed inset-0 z-40" : "aspect-video max-h-[52vh] w-full rounded-2xl transition-shadow duration-700",
         )}
-        style={fs ? undefined : { boxShadow: `0 0 40px ${glow}` }}
+        style={
+          fs
+            ? undefined
+            : ({ boxShadow: `0 0 48px ${glowColor(theme)}`, viewTransitionName: `art-${song.id}`, viewTransitionClass: "art" } as React.CSSProperties)
+        }
       >
         {!useVideo && (
           <div
@@ -500,7 +523,7 @@ export default function Player({ songId }: { songId: string }) {
       </Card>
 
       {/* ajustes */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-3 [&>*]:animate-fade-in-up [&>*:nth-child(2)]:[animation-delay:60ms] [&>*:nth-child(3)]:[animation-delay:120ms]">
         <Panel icon={<Mic2 className="size-4 text-primary" />} title="Vozes">
           {modeToggle}
           <SliderRow label="Vocais de apoio" value={settings.backing} onChange={v => setSetting("backing", v)} disabled={settings.mode === "original"} />
@@ -621,6 +644,7 @@ export default function Player({ songId }: { songId: string }) {
   )
 }
 
+// capa escolhida > miniatura do clipe > miniatura do vídeo (servida pelo nosso servidor)
 function artUrl(s: Song) {
-  return s.cover ? `/media/${s.id}/cover.jpg?v=${s.cover_v || 0}` : `https://i.ytimg.com/vi/${s.id}/hqdefault.jpg`
+  return `/api/art/${s.id}?v=${s.cover_v || 0}-${s.video?.status === "ready" ? s.video.source : ""}`
 }

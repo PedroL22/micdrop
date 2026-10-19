@@ -1,13 +1,13 @@
-import { Music, Search } from "lucide-react"
-import { useMemo, useState } from "react"
+import { Music } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
 
 import { SectionTitle } from "@/components/common"
 import { InviteDialog, MidiDialog } from "@/components/HostDialogs"
+import { LibraryToolbar, sortSongs, useLibraryPrefs } from "@/components/LibraryToolbar"
 import { QueueList } from "@/components/QueueList"
 import { SearchPanel } from "@/components/SearchPanel"
-import { SongCard } from "@/components/SongCard"
+import { SongCard, SongRow } from "@/components/SongCard"
 import { Badge } from "@/components/ui/badge"
-import { Input } from "@/components/ui/input"
 import { usePolling } from "@/hooks/usePolling"
 import { api } from "@/lib/api"
 import type { Info, Job, Song } from "@/lib/types"
@@ -15,18 +15,28 @@ import type { Info, Job, Song } from "@/lib/types"
 export default function Home() {
   const [data, refresh] = usePolling(() =>
     Promise.all([api<Job[]>("/api/queue"), api<Song[]>("/api/songs")]).then(([queue, songs]) => ({ queue, songs })),
+    1200,
+    "home",
   )
-  const [info, refreshInfo] = usePolling(() => api<Info>("/api/info"), 15000)
+  const [info, refreshInfo] = usePolling(() => api<Info>("/api/info"), 15000, "info")
+  // cartões entram em cascata só quando a tela abre (não a cada atualização)
+  const [entering, setEntering] = useState(true)
+  useEffect(() => {
+    const t = setTimeout(() => setEntering(false), 1200)
+    return () => clearTimeout(t)
+  }, [])
   const [filter, setFilter] = useState("")
+  const [prefs, setPrefs] = useLibraryPrefs()
 
   const songs = data?.songs || []
   const shown = useMemo(() => {
     const f = filter.trim().toLowerCase()
-    return f ? songs.filter(s => `${s.title} ${s.artist} ${s.channel}`.toLowerCase().includes(f)) : songs
-  }, [songs, filter])
+    const found = f ? songs.filter(s => `${s.title} ${s.artist} ${s.channel}`.toLowerCase().includes(f)) : songs
+    return sortSongs(found, prefs)
+  }, [songs, filter, prefs])
 
   return (
-    <div className="mx-auto max-w-4xl space-y-8 px-4 py-8">
+    <div className="mx-auto max-w-4xl animate-fade-in space-y-8 px-4 py-8">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="grid size-11 place-items-center rounded-2xl bg-primary/15 text-2xl">🎤</div>
@@ -46,18 +56,14 @@ export default function Home() {
       <QueueList jobs={data?.queue || []} onChange={refresh} />
 
       <section>
-        <SectionTitle
-          aside={
-            songs.length > 3 && (
-              <div className="relative w-48">
-                <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
-                <Input value={filter} onChange={e => setFilter(e.target.value)} placeholder="Procurar" className="pl-8" />
-              </div>
-            )
-          }
-        >
+        <SectionTitle>
           Biblioteca {songs.length > 0 && <Badge variant="secondary">{songs.length}</Badge>}
         </SectionTitle>
+        {songs.length > 0 && (
+          <div className="mb-4">
+            <LibraryToolbar filter={filter} onFilter={setFilter} prefs={prefs} onPrefs={setPrefs} />
+          </div>
+        )}
 
         {data && songs.length === 0 && (
           <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed py-12 text-center">
@@ -69,11 +75,19 @@ export default function Home() {
         {songs.length > 0 && shown.length === 0 && (
           <p className="text-sm text-muted-foreground">Nenhuma música com “{filter}”.</p>
         )}
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {shown.map(s => (
-            <SongCard key={s.id} song={s} onChange={refresh} />
-          ))}
-        </div>
+        {prefs.view === "grid" ? (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {shown.map((s, i) => (
+              <SongCard key={s.id} song={s} onChange={refresh} index={i} animate={entering} />
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {shown.map((s, i) => (
+              <SongRow key={s.id} song={s} onChange={refresh} index={i} animate={entering} />
+            ))}
+          </div>
+        )}
       </section>
     </div>
   )

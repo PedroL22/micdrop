@@ -3,11 +3,11 @@ import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import { Thumb } from "@/components/common"
+import { ImageThumbnail } from "@/components/ImageThumbnail"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Progress } from "@/components/ui/progress"
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -50,13 +50,13 @@ export function Pickers({ song, open, tab, onOpenChange, onTabChange, onSong }: 
               <Clapperboard /> Clipe
             </TabsTrigger>
           </TabsList>
-          <TabsContent value="lyrics" className="min-h-0">
+          <TabsContent value="lyrics" className="min-h-0 flex-1">
             <LyricsTab song={song} onSong={onSong} />
           </TabsContent>
-          <TabsContent value="cover" className="min-h-0">
+          <TabsContent value="cover" className="min-h-0 flex-1">
             <CoverTab song={song} onSong={onSong} />
           </TabsContent>
-          <TabsContent value="clip" className="min-h-0">
+          <TabsContent value="clip" className="min-h-0 flex-1">
             <ClipTab song={song} onSong={onSong} />
           </TabsContent>
         </Tabs>
@@ -161,8 +161,8 @@ function LyricsTab({ song, onSong }: { song: Song; onSong: (s: Song) => void }) 
       {s.loading && <Loading />}
       {s.error && <ErrorBox message={s.error} retry={() => s.go()} />}
       {!s.loading && s.items?.length === 0 && <p className="text-sm text-muted-foreground">Nenhuma letra encontrada. Tente mudar a busca.</p>}
-      <ScrollArea className="min-h-0 flex-1">
-        <ul className="space-y-1.5 pr-3">
+      <div className="-mr-2 min-h-0 flex-1 overflow-y-auto pr-2">
+        <ul className="space-y-1.5">
           {items.map(it => {
             const close = Math.abs(it.duration - dur) <= 3
             const current = song.lyrics?.source?.startsWith(`lrclib:${it.id}:`)
@@ -186,7 +186,7 @@ function LyricsTab({ song, onSong }: { song: Song; onSong: (s: Song) => void }) 
             )
           })}
         </ul>
-      </ScrollArea>
+      </div>
     </div>
   )
 }
@@ -208,33 +208,66 @@ function CoverTab({ song, onSong }: { song: Song; onSong: (s: Song) => void }) {
       setUsing("")
     }
   }
+  async function remove() {
+    try {
+      onSong(await api<Song>(`/api/songs/${song.id}/cover`, { method: "DELETE" }))
+      toast.success("Capa removida")
+    } catch (e) {
+      toast.error((e as Error).message)
+    }
+  }
+
+  const current = song.cover ? `/media/${song.id}/cover.jpg?v=${song.cover_v || 0}` : `https://i.ytimg.com/vi/${song.id}/hqdefault.jpg`
 
   return (
     <div className="flex h-full flex-col gap-3 pt-2">
+      <div className="flex items-center gap-3 rounded-lg bg-muted/60 p-3">
+        <img src={current} alt="Capa atual" className="size-16 shrink-0 rounded-md object-cover ring-2 ring-primary" />
+        <div className="min-w-0 flex-1 text-sm">
+          <p className="font-medium">Capa em uso</p>
+          <p className="text-xs text-muted-foreground">
+            {song.cover ? "Escolhida por você." : "Nenhuma escolhida: usando a imagem do YouTube."} Aparece de fundo quando não há
+            clipe e na biblioteca.
+          </p>
+        </div>
+        {song.cover && (
+          <Button size="sm" variant="ghost" onClick={remove}>
+            <Trash2 /> Remover
+          </Button>
+        )}
+      </div>
       <SearchBox {...s} go={() => s.go()} placeholder="Artista e álbum" />
-      <p className="text-xs text-muted-foreground">Aparece de fundo quando não há clipe e na biblioteca.</p>
       {s.loading && <Loading />}
       {s.error && <ErrorBox message={s.error} retry={() => s.go()} />}
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="grid grid-cols-3 gap-2 pr-3">
-          {(s.items || []).map(it => (
-            <button
-              key={it.full}
-              type="button"
-              title={`${it.artist || ""} — ${it.album || ""}`}
-              onClick={() => use(it)}
-              className="relative overflow-hidden rounded-md ring-primary transition hover:ring-2 focus-visible:ring-2"
-            >
-              <img src={it.thumb} alt="" loading="lazy" className="aspect-square w-full object-cover" />
-              {using === it.full && (
-                <span className="absolute inset-0 grid place-items-center bg-black/60">
-                  <Loader2 className="size-5 animate-spin" />
-                </span>
-              )}
-            </button>
-          ))}
+      <div className="-mr-2 min-h-0 flex-1 overflow-y-auto pr-2">
+        <div className="grid grid-cols-3 gap-2">
+          {(s.items || []).map(it => {
+            const inUse = !!song.cover && song.cover_url === it.full
+            return (
+              <button
+                key={it.full}
+                type="button"
+                title={`${it.artist || ""} — ${it.album || ""}${inUse ? " (em uso)" : ""}`}
+                onClick={() => !inUse && use(it)}
+                aria-pressed={inUse}
+                className={`relative overflow-hidden rounded-md ring-primary transition hover:ring-2 focus-visible:ring-2 ${inUse ? "ring-3" : ""}`}
+              >
+                <ImageThumbnail src={it.thumb} containerClassName="aspect-square w-full" />
+                {inUse && (
+                  <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-primary py-0.5 text-[11px] font-semibold text-primary-foreground">
+                    <Check className="size-3" /> Em uso
+                  </span>
+                )}
+                {using === it.full && (
+                  <span className="absolute inset-0 grid place-items-center bg-black/60">
+                    <Loader2 className="size-5 animate-spin" />
+                  </span>
+                )}
+              </button>
+            )
+          })}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   )
 }
@@ -295,8 +328,8 @@ function ClipTab({ song, onSong }: { song: Song; onSong: (s: Song) => void }) {
       <SearchBox {...s} go={() => s.go()} placeholder="Buscar outro vídeo no YouTube" />
       {s.loading && <Loading />}
       {s.error && <ErrorBox message={s.error} retry={() => s.go()} />}
-      <ScrollArea className="min-h-0 flex-1">
-        <ul className="space-y-1.5 pr-3">
+      <div className="-mr-2 min-h-0 flex-1 overflow-y-auto pr-2">
+        <ul className="space-y-1.5">
           {(s.items || []).map(it => (
             <li key={it.id} className="flex items-center gap-3 rounded-lg border p-2">
               <Thumb src={it.thumbnail} className="aspect-video w-24" />
@@ -317,7 +350,7 @@ function ClipTab({ song, onSong }: { song: Song; onSong: (s: Song) => void }) {
             </li>
           ))}
         </ul>
-      </ScrollArea>
+      </div>
     </div>
   )
 }

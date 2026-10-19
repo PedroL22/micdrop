@@ -120,6 +120,70 @@ def qr():
 
 # ---------------------------------------------------------------- API
 
+# Ajustes do player que valem para todas as músicas (ficam em data/_prefs.json)
+PLAYER_DEFAULTS = {"mode": "instrumental", "backing": 1.0, "lead": 0.0, "blur": 0.5,
+                   "brightness": 0.85, "bg": "video", "volume": 1.0}
+PREFS_FILE = os.path.join(pipeline.DATA, "_prefs.json")
+
+
+def load_prefs():
+    try:
+        with open(PREFS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+@app.get("/api/prefs")
+def prefs_get():
+    return jsonify({**PLAYER_DEFAULTS, **load_prefs()})
+
+
+@app.patch("/api/prefs")
+def prefs_update():
+    body = request.get_json(force=True)
+    player = load_prefs()
+    for k, v in body.items():
+        if k not in PLAYER_DEFAULTS:
+            continue
+        if k == "mode" and v not in ("instrumental", "original"):
+            continue
+        if k == "bg" and v not in ("cover", "video"):
+            continue
+        if k not in ("mode", "bg"):
+            v = max(0.0, min(1.0, float(v)))
+        player[k] = v
+    pipeline._write_json(PREFS_FILE, player)
+    return jsonify({**PLAYER_DEFAULTS, **player})
+
+
+@app.get("/api/art/<song_id>")
+def art(song_id):
+    """Imagem da música pelo nosso endereço (o navegador só deixa ler as cores assim).
+
+    Capa escolhida > miniatura do clipe > miniatura do vídeo da música."""
+    s = pipeline.get_song(song_id)
+    if not s:
+        abort(404)
+    folder = pipeline.song_dir(song_id)
+    if s.get("cover") and os.path.exists(os.path.join(folder, "cover.jpg")):
+        return send_file(os.path.join(folder, "cover.jpg"), max_age=0)
+    video = s.get("video") or {}
+    vid = video.get("source") if video.get("status") == "ready" else song_id
+    if not pipeline.VIDEO_ID_RE.match(vid or ""):
+        vid = song_id
+    path = os.path.join(folder, f"thumb_{vid}.jpg")
+    if not os.path.exists(path):
+        try:
+            r = requests.get(f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg", headers=UA, timeout=15)
+            r.raise_for_status()
+            with open(path, "wb") as f:
+                f.write(r.content)
+        except Exception:
+            abort(404)
+    return send_file(path, max_age=3600)
+
+
 @app.get("/api/info")
 def info():
     return jsonify(session_url=session_url(), admin=is_admin(),
@@ -279,12 +343,10 @@ def lyrics_use(song_id):
     except Exception:
         return jsonify(error="O site de letras (LRCLIB) não respondeu. Tente de novo em alguns segundos."), 502
     lyr = lyrics.build(item)
-    changes = {"lyrics": lyr, "offset": 0.0}
-    if item.get("trackName"):
-        changes["title"] = pipeline.clean_title(item["trackName"], item.get("artistName"))
-    if item.get("artistName"):
-        changes["artist"] = item["artistName"]
-    s = pipeline.update_song(song_id, changes)
+    cur = pipeline.get_song(song_id)
+    title, artist = lyrics.names_for(item, cur.get("title") or "", cur.get("artist") or "")
+    title = pipeline.clean_title(pipeline.JUNK.sub("", title).strip(), artist)
+    s = pipeline.update_song(song_id, {"lyrics": lyr, "offset": 0.0, "title": title, "artist": artist})
     if lyr["synced"] and not lyr.get("words_source"):
         s = pipeline.start_word_sync(song_id)
     return jsonify(public_song(s))
@@ -350,7 +412,19 @@ def cover_use(song_id):
     r.raise_for_status()
     with open(os.path.join(pipeline.song_dir(song_id), "cover.jpg"), "wb") as f:
         f.write(r.content)
-    return jsonify(public_song(pipeline.update_song(song_id, {"cover": "cover.jpg", "cover_v": int(time.time())})))
+    # cover_url: de onde veio, para a tela marcar qual capa está em uso
+    return jsonify(public_song(pipeline.update_song(
+        song_id, {"cover": "cover.jpg", "cover_v": int(time.time()), "cover_url": url})))
+
+
+@app.delete("/api/songs/<song_id>/cover")
+def cover_remove(song_id):
+    if not pipeline.get_song(song_id):
+        abort(404)
+    path = os.path.join(pipeline.song_dir(song_id), "cover.jpg")
+    if os.path.exists(path):
+        os.remove(path)
+    return jsonify(public_song(pipeline.update_song(song_id, {"cover": None, "cover_url": None})))
 
 
 # ---------------------------------------------------------------- clipe de fundo

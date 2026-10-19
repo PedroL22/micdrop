@@ -1,9 +1,14 @@
 import { useEffect, useRef, useState } from "react"
 
-/** Consulta o servidor a cada `ms` (mais devagar com a aba escondida) e só re-renderiza se mudou. */
-export function usePolling<T>(fetcher: () => Promise<T>, ms = 1200): [T | undefined, () => void] {
-  const [data, setData] = useState<T>()
-  const last = useRef("")
+const cache = new Map<string, unknown>()
+
+/**
+ * Consulta o servidor a cada `ms` (mais devagar com a aba escondida) e só re-renderiza se mudou.
+ * Com `key`, guarda o último resultado: ao voltar para a tela ela já aparece preenchida.
+ */
+export function usePolling<T>(fetcher: () => Promise<T>, ms = 1200, key?: string): [T | undefined, () => void] {
+  const [data, setData] = useState<T | undefined>(() => (key ? (cache.get(key) as T | undefined) : undefined))
+  const last = useRef(key && cache.has(key) ? JSON.stringify(cache.get(key)) : "")
   const fetchRef = useRef(fetcher)
   fetchRef.current = fetcher
   const kick = useRef<() => void>(() => {})
@@ -15,9 +20,10 @@ export function usePolling<T>(fetcher: () => Promise<T>, ms = 1200): [T | undefi
       clearTimeout(timer)
       try {
         const value = await fetchRef.current()
-        const key = JSON.stringify(value)
-        if (alive && key !== last.current) {
-          last.current = key
+        const json = JSON.stringify(value)
+        if (alive && json !== last.current) {
+          last.current = json
+          if (key) cache.set(key, value)
           setData(value)
         }
       } catch {
@@ -31,7 +37,7 @@ export function usePolling<T>(fetcher: () => Promise<T>, ms = 1200): [T | undefi
       alive = false
       clearTimeout(timer)
     }
-  }, [ms])
+  }, [ms, key])
 
   return [data, () => kick.current()]
 }

@@ -3,6 +3,7 @@ import { useState } from "react"
 import { toast } from "sonner"
 
 import { Confirm, PreviewButton } from "@/components/common"
+import { ImageThumbnail } from "@/components/ImageThumbnail"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -13,8 +14,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { api, keyLabel, songTitle, wordsReady } from "@/lib/api"
+import { api, fmtTime, keyLabel, songTitle, wordsReady } from "@/lib/api"
+import { navigate } from "@/lib/router"
 import type { Song } from "@/lib/types"
+import { cn } from "@/lib/utils"
 
 function cardArt(s: Song) {
   if (s.cover) return `/media/${s.id}/cover.jpg?v=${s.cover_v || 0}`
@@ -22,9 +25,45 @@ function cardArt(s: Song) {
   return `https://i.ytimg.com/vi/${clip}/hqdefault.jpg`
 }
 
-export function SongCard({ song, onChange }: { song: Song; onChange: () => void }) {
+function openSong(s: Song, pick?: string) {
+  navigate(`/player/${s.id}${pick ? `?pick=${pick}` : ""}`)
+}
+
+// Nomes de View Transition: o cartão desliza ao reordenar e a imagem vira o palco do player
+export const vt = (name: string, cls: string) => ({ viewTransitionName: name, viewTransitionClass: cls }) as React.CSSProperties
+
+type ItemProps = { song: Song; onChange: () => void; index?: number; animate?: boolean }
+const enter = (animate?: boolean, index = 0) =>
+  animate ? { className: "animate-fade-in-up", style: { animationDelay: `${Math.min(index, 12) * 40}ms` } } : { className: "", style: {} }
+
+/** Selos: tom, estado da letra e clipe. */
+function SongBadges({ song }: { song: Song }) {
+  return (
+    <>
+      <Badge variant="secondary">
+        <Music2 /> {keyLabel(song.key, song.scale)}
+      </Badge>
+      {wordsReady(song) ? (
+        <Badge variant="outline" className="border-emerald-500/40 text-emerald-400">
+          <Check /> Letra
+        </Badge>
+      ) : song.lyrics ? (
+        <Badge variant="outline">Letra sem palavras</Badge>
+      ) : (
+        <Badge variant="destructive">Sem letra</Badge>
+      )}
+      {song.video?.status === "ready" && (
+        <Badge variant="outline">
+          <Clapperboard /> Clipe
+        </Badge>
+      )}
+    </>
+  )
+}
+
+/** Prévia + menu "⋮" (cantar, trocar letra/capa/clipe, apagar). */
+function SongActions({ song, onChange }: { song: Song; onChange: () => void }) {
   const [confirm, setConfirm] = useState(false)
-  const open = (pick?: string) => (location.href = `/player/${song.id}${pick ? `?pick=${pick}` : ""}`)
 
   async function remove() {
     try {
@@ -37,13 +76,65 @@ export function SongCard({ song, onChange }: { song: Song; onChange: () => void 
   }
 
   return (
-    <Card className="group gap-0 overflow-hidden py-0">
-      <button type="button" onClick={() => open()} className="relative block aspect-video w-full overflow-hidden text-left">
-        <img
+    <>
+      <PreviewButton id={`song-${song.id}`} src={`/media/${song.id}/original.flac`} start={(song.duration || 60) / 2} variant="ghost" />
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" aria-label="Mais opções">
+            <MoreVertical />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-44">
+          <DropdownMenuItem onSelect={() => openSong(song)}>
+            <Mic /> Cantar
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => openSong(song, "lyrics")}>
+            <FileText /> Trocar letra
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => openSong(song, "cover")}>
+            <Image /> Trocar capa
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => openSong(song, "clip")}>
+            <Clapperboard /> Trocar clipe
+          </DropdownMenuItem>
+          {song.mine && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="destructive" onSelect={() => setConfirm(true)}>
+                <Trash2 /> Apagar
+              </DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <Confirm
+        open={confirm}
+        onOpenChange={setConfirm}
+        title="Apagar esta música?"
+        description={`"${songTitle(song)}" sai da biblioteca, junto com as vozes separadas, a letra e o clipe.`}
+        onConfirm={remove}
+      />
+    </>
+  )
+}
+
+/** Modo grade: cartão grande com a imagem. */
+export function SongCard({ song, onChange, index, animate }: ItemProps) {
+  const e = enter(animate, index)
+  return (
+    <Card
+      className={cn(
+        "group gap-0 overflow-hidden py-0 transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-primary/10",
+        e.className,
+      )}
+      style={{ ...vt(`song-${song.id}`, "card"), ...e.style }}
+    >
+      <button type="button" onClick={() => openSong(song)} className="relative block aspect-video w-full overflow-hidden text-left">
+        <ImageThumbnail
           src={cardArt(song)}
-          alt=""
-          loading="lazy"
-          className="size-full object-cover transition-transform duration-300 group-hover:scale-105"
+          containerClassName="size-full"
+          className="duration-500 group-hover:scale-105"
+          style={vt(`art-${song.id}`, "art")}
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
         <div className="absolute inset-0 grid place-items-center opacity-0 transition-opacity group-hover:opacity-100">
@@ -51,6 +142,9 @@ export function SongCard({ song, onChange }: { song: Song; onChange: () => void 
             <Mic className="size-4" /> Cantar
           </span>
         </div>
+        <span className="absolute top-2 right-2 rounded-md bg-black/60 px-1.5 py-0.5 text-xs text-white tabular-nums">
+          {fmtTime(song.duration)}
+        </span>
         <div className="absolute inset-x-0 bottom-0 p-3">
           <p className="truncate font-semibold text-white">{songTitle(song)}</p>
           <p className="truncate text-sm text-white/70">
@@ -61,62 +155,46 @@ export function SongCard({ song, onChange }: { song: Song; onChange: () => void 
       </button>
       <div className="flex items-center gap-1.5 p-2.5">
         <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
-          <Badge variant="secondary">
-            <Music2 /> {keyLabel(song.key, song.scale)}
-          </Badge>
-          {wordsReady(song) ? (
-            <Badge variant="outline" className="border-emerald-500/40 text-emerald-400">
-              <Check /> Letra
-            </Badge>
-          ) : song.lyrics ? (
-            <Badge variant="outline">Letra sem palavras</Badge>
-          ) : (
-            <Badge variant="destructive">Sem letra</Badge>
-          )}
-          {song.video?.status === "ready" && (
-            <Badge variant="outline">
-              <Clapperboard /> Clipe
-            </Badge>
-          )}
+          <SongBadges song={song} />
         </div>
-        <PreviewButton id={`song-${song.id}`} src={`/media/${song.id}/original.flac`} start={(song.duration || 60) / 2} variant="ghost" />
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" aria-label="Mais opções">
-              <MoreVertical />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-44">
-            <DropdownMenuItem onSelect={() => open()}>
-              <Mic /> Cantar
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => open("lyrics")}>
-              <FileText /> Trocar letra
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => open("cover")}>
-              <Image /> Trocar capa
-            </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => open("clip")}>
-              <Clapperboard /> Trocar clipe
-            </DropdownMenuItem>
-            {song.mine && (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem variant="destructive" onSelect={() => setConfirm(true)}>
-                  <Trash2 /> Apagar
-                </DropdownMenuItem>
-              </>
-            )}
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <SongActions song={song} onChange={onChange} />
       </div>
-      <Confirm
-        open={confirm}
-        onOpenChange={setConfirm}
-        title="Apagar esta música?"
-        description={`"${songTitle(song)}" sai da biblioteca, junto com as vozes separadas, a letra e o clipe.`}
-        onConfirm={remove}
-      />
+    </Card>
+  )
+}
+
+/** Modo lista: uma linha compacta por música. */
+export function SongRow({ song, onChange, index, animate }: ItemProps) {
+  const e = enter(animate, index)
+  return (
+    <Card
+      size="sm"
+      className={cn("group flex-row items-center gap-3 px-2.5 py-2 transition-colors duration-200 hover:bg-accent/40", e.className)}
+      style={{ ...vt(`song-${song.id}`, "card"), ...e.style }}
+    >
+      <button type="button" onClick={() => openSong(song)} className="relative shrink-0 overflow-hidden rounded-md" aria-label={`Cantar ${songTitle(song)}`}>
+        <ImageThumbnail src={cardArt(song)} containerClassName="aspect-video w-24" style={vt(`art-${song.id}`, "art")} />
+        <span className="absolute inset-0 grid place-items-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
+          <Mic className="size-4 text-white" />
+        </span>
+      </button>
+      <button type="button" onClick={() => openSong(song)} className="min-w-0 flex-1 text-left">
+        <p className="truncate font-medium">{songTitle(song)}</p>
+        <p className="truncate text-sm text-muted-foreground">
+          {song.artist || song.channel}
+          {song.owner_name && <span> · por {song.owner_name}</span>}
+        </p>
+      </button>
+      <div className="hidden flex-wrap justify-end gap-1.5 md:flex">
+        <SongBadges song={song} />
+      </div>
+      <span className="w-12 text-right text-sm tabular-nums text-muted-foreground">{fmtTime(song.duration)}</span>
+      <Button size="sm" onClick={() => openSong(song)} className="hidden sm:inline-flex">
+        <Mic /> Cantar
+      </Button>
+      <div className="flex">
+        <SongActions song={song} onChange={onChange} />
+      </div>
     </Card>
   )
 }

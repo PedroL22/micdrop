@@ -12,6 +12,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
+import { ImageThumbnail } from "@/components/ImageThumbnail"
 import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { togglePreview, usePreview } from "@/lib/preview"
@@ -116,9 +117,9 @@ export function Confirm({
   )
 }
 
-/** Miniatura com proporção fixa. */
+/** Miniatura com proporção fixa que aparece suavemente. */
 export function Thumb({ src, className, alt = "" }: { src: string; className?: string; alt?: string }) {
-  return <img src={src} alt={alt} loading="lazy" className={cn("shrink-0 rounded-md bg-muted object-cover", className)} />
+  return <ImageThumbnail src={src} alt={alt} containerClassName={cn("shrink-0 rounded-md", className)} />
 }
 
 export function SectionTitle({ children, aside }: { children: ReactNode; aside?: ReactNode }) {
