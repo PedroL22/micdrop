@@ -68,19 +68,41 @@ JUNK = re.compile(
 )
 
 
+DASH = re.compile(r"\s+[-–—|]\s+")  # "Artista - Música", "Música – Artista", "A | B"
+
+
+def _same(a, b):
+    norm = lambda s: re.sub(r"[^a-z0-9]", "", (s or "").lower().replace("vevo", ""))
+    return bool(norm(a)) and norm(a) == norm(b)
+
+
+def clean_title(title, artist):
+    """Tira o nome do artista quando ele vem grudado no título ("Música – Artista")."""
+    parts = DASH.split((title or "").strip(), maxsplit=1)
+    if len(parts) == 2 and artist:
+        if _same(parts[1], artist):
+            return parts[0].strip()
+        if _same(parts[0], artist):
+            return parts[1].strip()
+    return (title or "").strip()
+
+
 def guess_artist_title(info):
     """Tenta descobrir artista e nome da música a partir dos dados do YouTube."""
-    title = (info.get("track") or info.get("title") or "").strip()
     artist = (info.get("artist") or info.get("creator") or "").split(",")[0].strip()
     channel = (info.get("channel") or info.get("uploader") or "").strip()
     if info.get("track") and artist:
-        return artist, title
-    clean = JUNK.sub("", info.get("title") or "").strip()
+        return artist, clean_title(info["track"], artist)
+    clean = re.sub(r"\s+", " ", JUNK.sub("", info.get("title") or "")).strip()
     if channel.endswith(" - Topic"):
-        return channel[: -len(" - Topic")], clean
-    if " - " in clean:
-        a, t = clean.split(" - ", 1)
-        return a.strip(), t.strip()
+        channel = channel[: -len(" - Topic")]
+    channel = re.sub(r"(?i)\s*(vevo|official)$", "", channel).strip()
+    parts = DASH.split(clean, maxsplit=1)
+    if len(parts) == 2:
+        a, b = (p.strip() for p in parts)
+        if _same(b, channel):      # "Música – Artista"
+            return b, a
+        return a, b                # "Artista - Música"
     return channel, clean
 
 
@@ -486,6 +508,10 @@ def start(config):
             _jobs.append(j)
         _save_queue()
         for meta in list_songs():
+            if not meta.get("lyrics"):
+                fixed = clean_title(meta.get("title"), meta.get("artist"))
+                if fixed and fixed != meta.get("title"):
+                    update_song(meta["id"], {"title": fixed})
             if (meta.get("video") or {}).get("status") == "downloading":
                 _video_state(meta["id"], status="error", error="Download interrompido; tente de novo")
     threading.Thread(target=_worker, daemon=True, name="pipeline").start()

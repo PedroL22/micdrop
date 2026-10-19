@@ -273,6 +273,21 @@ $("#pickLyrics").onclick = () => openPicker("lyricsPicker");
 $("#pickCover").onclick = () => openPicker("coverPicker");
 $("#pickClip").onclick = () => openPicker("clipPicker");
 
+// "Somewhere I Belong – Linkin Park" + "Linkin Park" -> "Somewhere I Belong"
+function cleanTitle(title, artist) {
+  const norm = s => (s || "").toLowerCase().replace(/vevo/g, "").replace(/[^a-z0-9]/g, "");
+  const parts = (title || "").split(/\s+[-–—|]\s+/);
+  if (parts.length >= 2 && artist) {
+    if (norm(parts[parts.length - 1]) === norm(artist)) return parts.slice(0, -1).join(" - ").trim();
+    if (norm(parts[0]) === norm(artist)) return parts.slice(1).join(" - ").trim();
+  }
+  return (title || "").trim();
+}
+
+function searchQuery(extra = "") {
+  return `${song.artist || ""} ${cleanTitle(song.title, song.artist)} ${extra}`.replace(/\s+/g, " ").trim();
+}
+
 async function searchLyrics() {
   const list = $("#lyricsList");
   const q = $("#lyricsQ").value.trim();
@@ -308,7 +323,11 @@ async function searchLyrics() {
       };
       list.appendChild(row);
     }
-  } catch (e) { list.innerHTML = `<div class="empty">${esc(e.message)}</div>`; }
+  } catch (e) {
+    list.innerHTML = `<div class="empty">${esc(e.message)}
+      <button class="btn small" id="lyricsRetry" type="button">Tentar de novo</button></div>`;
+    $("#lyricsRetry").onclick = searchLyrics;
+  }
 }
 $("#lyricsForm").onsubmit = ev => { ev.preventDefault(); searchLyrics(); };
 
@@ -527,8 +546,8 @@ document.addEventListener("keydown", e => {
   song.settings = { mode: "instrumental", backing: 1, lead: 0, blur: 0.5, brightness: 0.85,
                     bg: "cover", video_offset: 0, ...(song.settings || {}) };
   song.offset = song.offset || 0;
-  $("#title").textContent = song.title;
-  document.title = `${song.title} · Karaoke`;
+  $("#title").textContent = cleanTitle(song.title, song.artist);
+  document.title = `${cleanTitle(song.title, song.artist)} · Karaoke`;
 
   // nota e escala (mandadas por MIDI para o Auto-Tune)
   const noteSel = $("#note"), scaleSel = $("#scale");
@@ -555,9 +574,9 @@ document.addEventListener("keydown", e => {
   applyLook();
   setArt();
 
-  $("#lyricsQ").value = `${song.artist} ${song.title}`.trim();
-  $("#coverQ").value = `${song.artist} ${song.title}`.trim();
-  $("#clipQ").value = `${song.artist} ${song.title} clipe oficial`.trim();
+  $("#lyricsQ").value = searchQuery();
+  $("#coverQ").value = searchQuery();
+  $("#clipQ").value = searchQuery("clipe oficial");
   applyBg();
   if (song.video && song.video.status === "downloading") watchClip();
   useSongLyrics();

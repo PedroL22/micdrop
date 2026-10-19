@@ -250,18 +250,25 @@ def parse_lrc(text):
 _lrc_cache = {}  # id do LRCLIB -> resultado completo da busca (já vem com a letra)
 
 
+def _lrclib(path, params=None, attempts=4):
+    """O LRCLIB às vezes responde 503 (instável) ou 429 (muitas buscas): tenta de novo com pausas."""
+    for attempt in range(attempts):
+        try:
+            r = requests.get(f"https://lrclib.net/api/{path}", params=params, headers=UA, timeout=15)
+        except requests.RequestException:
+            if attempt == attempts - 1:
+                raise
+        else:
+            if r.status_code not in (429, 500, 502, 503, 504) or attempt == attempts - 1:
+                r.raise_for_status()
+                return r.json()
+        time.sleep(1 + attempt * 1.5)
+
+
 def _lrclib_get(lrclib_id):
     if lrclib_id in _lrc_cache:
         return _lrc_cache[lrclib_id]
-    for attempt in range(3):
-        try:
-            r = requests.get(f"https://lrclib.net/api/get/{lrclib_id}", headers=UA, timeout=15)
-            r.raise_for_status()
-            return r.json()
-        except Exception:
-            if attempt == 2:
-                raise
-            time.sleep(1.5)
+    return _lrclib(f"get/{lrclib_id}")
 
 
 @app.get("/api/lyrics/search")
@@ -270,12 +277,14 @@ def lyrics_search():
     if not q:
         return jsonify([])
     try:
-        r = requests.get("https://lrclib.net/api/search", params={"q": q}, headers=UA, timeout=15)
-        r.raise_for_status()
+        results = _lrclib("search", {"q": q})
     except Exception as exc:
-        return jsonify(error=f"LRCLIB fora do ar? {exc}"), 502
+        code = getattr(getattr(exc, "response", None), "status_code", None)
+        why = f"erro {code}" if code else "sem conexão"
+        return jsonify(error=f"O site de letras (LRCLIB) está instável agora ({why}). "
+                             "Tente de novo em alguns segundos."), 502
     out = []
-    for item in r.json():
+    for item in results:
         if not (item.get("syncedLyrics") or item.get("plainLyrics")):
             continue
         _lrc_cache[item["id"]] = item
@@ -295,7 +304,7 @@ def lyrics_use(song_id):
     try:
         item = _lrclib_get(lrclib_id)
     except Exception as exc:
-        return jsonify(error=f"O LRCLIB não respondeu, tente de novo ({exc})"), 502
+        return jsonify(error="O site de letras (LRCLIB) não respondeu. Tente de novo em alguns segundos."), 502
     if item.get("syncedLyrics"):
         lyrics = {"synced": True, "lines": parse_lrc(item["syncedLyrics"])}
     else:
