@@ -84,7 +84,7 @@ function SongActions({ song, onChange }: { song: Song; onChange: () => void }) {
             <MoreVertical />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-44">
+        <DropdownMenuContent side="top" align="end" className="w-44">
           <DropdownMenuItem onSelect={() => openSong(song)}>
             <Mic /> Cantar
           </DropdownMenuItem>
@@ -124,7 +124,7 @@ export function SongCard({ song, onChange, index, animate }: ItemProps) {
   return (
     <Card
       className={cn(
-        "group gap-0 overflow-hidden py-0 transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-primary/10",
+        "group gap-0 overflow-hidden py-0 transition-[translate,box-shadow,border-color] duration-300 ease-out hover:-translate-y-1 hover:shadow-xl hover:shadow-primary/10",
         e.className,
       )}
       style={{ ...vt(`song-${song.id}`, "card"), ...e.style }}

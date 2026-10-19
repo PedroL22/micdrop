@@ -39,6 +39,9 @@ export type Video = {
   title?: string
   duration?: number
   error: string | null
+  offset?: number
+  sync?: "running" | "done" | "error"
+  sync_error?: string | null
 }
 
 export type Settings = {
@@ -49,6 +52,7 @@ export type Settings = {
   brightness: number
   bg: "cover" | "video"
   video_offset: number
+  clip_off?: boolean // clipe desligado só nesta música
 }
 
 export type Song = {

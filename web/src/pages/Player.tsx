@@ -14,6 +14,7 @@ import {
   Play,
   Type,
   Volume2,
+  Wand2,
 } from "lucide-react"
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { toast } from "sonner"
@@ -24,6 +25,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Slider } from "@/components/ui/slider"
+import { Switch } from "@/components/ui/switch"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { api, cleanTitle, fmtTime, pct, wordsReady } from "@/lib/api"
 import type { Info, Settings, Song } from "@/lib/types"
@@ -99,7 +101,12 @@ export default function Player({ songId }: { songId: string }) {
   const [theme, setTheme] = useState<Theme | null>(null)
 
   // preferências gerais + o que é só desta música (atraso do clipe)
-  const settings: Settings = { ...DEFAULTS, ...prefs, video_offset: song?.settings?.video_offset || 0 }
+  const settings: Settings = {
+    ...DEFAULTS,
+    ...prefs,
+    video_offset: song?.settings?.video_offset || 0,
+    clip_off: !!song?.settings?.clip_off,
+  }
   offsetRef.current = song?.offset || 0
 
   // ------------------------------------------------------------ carregar
@@ -167,7 +174,10 @@ export default function Player({ songId }: { songId: string }) {
 
   // enquanto algo estiver sendo preparado (palavras, clipe), acompanha o servidor
   const busy =
-    song?.video?.status === "downloading" || song?.lyrics?.align?.status === "queued" || song?.lyrics?.align?.status === "running"
+    song?.video?.status === "downloading" ||
+    song?.video?.sync === "running" ||
+    song?.lyrics?.align?.status === "queued" ||
+    song?.lyrics?.align?.status === "running"
   useEffect(() => {
     if (!busy) return
     const id = setInterval(async () => {
@@ -176,6 +186,11 @@ export default function Player({ songId }: { songId: string }) {
         setSong(cur => {
           if (!cur) return s
           const next = { ...cur, lyrics: s.lyrics, video: s.video }
+          if (cur.video?.sync === "running" && s.video?.sync && s.video.sync !== "running") {
+            next.settings = { ...cur.settings, video_offset: s.settings?.video_offset || 0 }
+            if (s.video.sync === "done") toast.success("Clipe sincronizado", { description: offsetLabel(s.settings?.video_offset || 0) })
+            else toast.error("Não deu para sincronizar o clipe", { description: s.video.sync_error || undefined })
+          }
           if (cur.video?.status === "downloading" && s.video?.status === "ready") toast.success("Clipe pronto!")
           if (!wordsReady(cur) && wordsReady(s)) toast.success("Palavras sincronizadas!")
           return next
@@ -338,7 +353,7 @@ export default function Player({ songId }: { songId: string }) {
   const lyrics = song.lyrics
   const lines = lyrics?.lines || []
   const videoReady = song.video?.status === "ready" && !!song.video.file
-  const useVideo = settings.bg === "video" && videoReady
+  const useVideo = settings.bg === "video" && videoReady && !settings.clip_off
   const align = lyrics?.align
   const aligning = align?.status === "queued" || align?.status === "running"
   const duration = engine.duration || song.duration
@@ -534,7 +549,7 @@ export default function Player({ songId }: { songId: string }) {
           <ToggleGroup
             type="single"
             variant="outline"
-            value={useVideo ? "video" : "cover"}
+            value={settings.bg}
             onValueChange={v => {
               if (!v) return
               if (v === "video" && !videoReady) return openPicker("clip")
@@ -551,10 +566,35 @@ export default function Player({ songId }: { songId: string }) {
           </ToggleGroup>
           <SliderRow label="Desfoque do fundo" value={settings.blur} onChange={v => setSetting("blur", v)} />
           <SliderRow label="Brilho do texto" value={settings.brightness} min={0.2} onChange={v => setSetting("brightness", v)} />
+          {videoReady && settings.bg === "video" && (
+            <label className="flex items-center justify-between gap-3 text-sm">
+              <span>
+                Clipe nesta música
+                <span className="block text-xs text-muted-foreground">Desligue se o clipe não combinar com a música</span>
+              </span>
+              <Switch checked={!settings.clip_off} onCheckedChange={on => setSetting("clip_off", !on)} />
+            </label>
+          )}
           {useVideo && (
             <div className="space-y-2">
-              <Label>Atraso do clipe</Label>
+              <div className="flex items-center justify-between">
+                <Label>Atraso do clipe</Label>
+                <Button
+                  size="xs"
+                  variant="secondary"
+                  disabled={song.video?.sync === "running"}
+                  onClick={() =>
+                    api<Song>(`/api/songs/${songId}/video/sync`, { method: "POST", body: {} })
+                      .then(s => setSong(cur => (cur ? { ...cur, video: s.video } : s)))
+                      .catch(e => toast.error(e.message))
+                  }
+                >
+                  {song.video?.sync === "running" ? <Loader2 className="animate-spin" /> : <Wand2 />}
+                  {song.video?.sync === "running" ? "Sincronizando..." : "Sincronizar sozinho"}
+                </Button>
+              </div>
               <Stepper value={settings.video_offset} onShift={d => setSetting("video_offset", Math.round((settings.video_offset + d) * 100) / 100)} />
+              <p className="text-xs text-muted-foreground">{offsetLabel(settings.video_offset)}</p>
             </div>
           )}
         </Panel>
@@ -645,6 +685,12 @@ export default function Player({ songId }: { songId: string }) {
 }
 
 // capa escolhida > miniatura do clipe > miniatura do vídeo (servida pelo nosso servidor)
+function offsetLabel(v: number) {
+  const s = Math.abs(v).toFixed(1).replace(".", ",")
+  if (Math.abs(v) < 0.05) return "O clipe começa junto com a música."
+  return v > 0 ? `Pulando os primeiros ${s} s do clipe (introdução).` : `O clipe começa ${s} s depois da música.`
+}
+
 function artUrl(s: Song) {
   return `/api/art/${s.id}?v=${s.cover_v || 0}-${s.video?.status === "ready" ? s.video.source : ""}`
 }

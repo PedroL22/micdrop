@@ -441,6 +441,14 @@ def video_use(song_id):
     return jsonify(public_song(s))
 
 
+@app.post("/api/songs/<song_id>/video/sync")
+def video_sync(song_id):
+    s = pipeline.sync_clip(song_id)
+    if not s:
+        abort(404)
+    return jsonify(public_song(s))
+
+
 @app.delete("/api/songs/<song_id>/video")
 def video_remove(song_id):
     s = pipeline.remove_video(song_id)
