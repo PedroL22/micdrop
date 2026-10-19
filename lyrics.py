@@ -131,6 +131,20 @@ def pick_best(items, artist, title, duration):
     return best
 
 
+def names_for(item, title, artist):
+    """Título e artista a usar depois de escolher uma letra.
+
+    Usa os nomes do LRCLIB (costumam vir mais limpos) só se o artista bater;
+    se vierem trocados (música no lugar do artista), desinverte; senão mantém os atuais."""
+    t, a = item.get("trackName") or "", item.get("artistName") or ""
+    near = lambda x, y: bool(_norm(x)) and bool(_norm(y)) and (_norm(x) in _norm(y) or _norm(y) in _norm(x))
+    if near(a, artist):
+        return t or title, a
+    if near(t, artist) and near(a, title):  # campos trocados no LRCLIB
+        return a, t
+    return title, artist
+
+
 def find_for(artist, title, duration):
     """Busca e escolhe sozinho. Tenta "artista + música" e depois só o nome da música."""
     for q in (f"{artist} {title}".strip(), title):

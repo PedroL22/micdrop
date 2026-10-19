@@ -35,7 +35,7 @@ export function QueueList({ jobs, onChange }: { jobs: Job[]; onChange: () => voi
         {jobs.map(job => {
           const err = job.status === "error"
           return (
-            <Card key={job.id} size="sm" className="flex-row items-center gap-3 px-3 py-3">
+            <Card key={job.id} size="sm" className="animate-fade-in-up flex-row items-center gap-3 px-3 py-3">
               <Thumb src={job.thumbnail} className="aspect-video w-24" />
               <div className="min-w-0 flex-1 space-y-1">
                 <p className="truncate text-sm font-medium">{job.title}</p>
@@ -54,7 +54,7 @@ export function QueueList({ jobs, onChange }: { jobs: Job[]; onChange: () => voi
                       {job.status === "running" && <Loader2 className="size-3 animate-spin" />}
                       {job.stage}
                     </p>
-                    <Progress value={Math.round(job.progress * 100)} />
+                    <Progress value={Math.round(job.progress * 100)} className="[&>[data-slot=progress-indicator]]:duration-700" />
                   </>
                 )}
               </div>

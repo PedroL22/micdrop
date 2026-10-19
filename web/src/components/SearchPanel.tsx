@@ -82,7 +82,7 @@ export function SearchPanel({ getName, onAdded, compact }: Props) {
         </form>
 
         {loading && (
-          <div className="space-y-2">
+          <div className="animate-fade-in space-y-2">
             {Array.from({ length: 3 }, (_, i) => (
               <div key={i} className="flex items-center gap-3">
                 <Skeleton className="h-12 w-20 rounded-md" />
@@ -101,10 +101,10 @@ export function SearchPanel({ getName, onAdded, compact }: Props) {
 
         {results && results.length > 0 && (
           <ul className="divide-y divide-border">
-            {results.map(item => {
+            {results.map((item, i) => {
               const state = added[item.id]
               return (
-                <li key={item.id} className="flex items-center gap-3 py-2">
+                <li key={item.id} className="flex animate-fade-in-up items-center gap-3 py-2" style={{ animationDelay: `${i * 50}ms` }}>
                   <Thumb src={item.thumbnail} className="aspect-video w-20 sm:w-24" />
                   <div className="min-w-0 flex-1">
                     <p className="line-clamp-2 text-sm font-medium leading-snug" title={item.title}>

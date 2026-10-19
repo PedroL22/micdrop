@@ -7,7 +7,7 @@ import { defineConfig } from "vite"
 // No desenvolvimento (npm run dev), as chamadas /api e /media vão para o Flask na porta 5000.
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  resolve: { alias: { "@": path.resolve(__dirname, "./src") } },
+  resolve: { alias: { "@": path.resolve(import.meta.dirname, "./src") } },
   build: { chunkSizeWarningLimit: 1500 },
   server: {
     proxy: {

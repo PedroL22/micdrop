@@ -29,6 +29,7 @@ import { api, cleanTitle, fmtTime, pct, wordsReady } from "@/lib/api"
 import type { Info, Settings, Song } from "@/lib/types"
 import { applyTheme, glowColor, themeFromImage, type Theme } from "@/lib/theme"
 import { cn } from "@/lib/utils"
+import { goBack } from "@/lib/router"
 import { AudioEngine } from "@/player/engine"
 import { LyricsView } from "@/player/LyricsView"
 import { Pickers, type PickerTab } from "@/player/Pickers"
@@ -129,6 +130,15 @@ export default function Player({ songId }: { songId: string }) {
       engine.pause()
     }
   }, [engine, songId])
+  // no modo de desenvolvimento o React desmonta e monta de novo: só fecha se não voltou
+  const mounted = useRef(false)
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      setTimeout(() => !mounted.current && engine.close(), 500)
+    }
+  }, [engine])
 
   // mixagem
   useEffect(() => {
@@ -387,13 +397,11 @@ export default function Player({ songId }: { songId: string }) {
   )
 
   return (
-    <div className={cn("mx-auto max-w-5xl space-y-4 px-4 py-5", fs && "overflow-hidden")}>
+    <div className={cn("mx-auto max-w-5xl animate-fade-in space-y-4 px-4 py-5", fs && "overflow-hidden")}>
       {/* topo */}
       <header className="flex items-center gap-3">
-        <IconButton label="Voltar para a biblioteca" asChild variant="ghost">
-          <a href="/">
-            <ArrowLeft />
-          </a>
+        <IconButton label="Voltar para a biblioteca" variant="ghost" onClick={() => goBack("/")}>
+          <ArrowLeft />
         </IconButton>
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-xl font-bold">{cleanTitle(song.title, song.artist)}</h1>
@@ -419,7 +427,11 @@ export default function Player({ songId }: { songId: string }) {
           "relative overflow-hidden bg-black",
           fs ? "fixed inset-0 z-40" : "aspect-video max-h-[52vh] w-full rounded-2xl transition-shadow duration-700",
         )}
-        style={fs ? undefined : { boxShadow: `0 0 48px ${glowColor(theme)}` }}
+        style={
+          fs
+            ? undefined
+            : ({ boxShadow: `0 0 48px ${glowColor(theme)}`, viewTransitionName: `art-${song.id}`, viewTransitionClass: "art" } as React.CSSProperties)
+        }
       >
         {!useVideo && (
           <div
@@ -511,7 +523,7 @@ export default function Player({ songId }: { songId: string }) {
       </Card>
 
       {/* ajustes */}
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-3 [&>*]:animate-fade-in-up [&>*:nth-child(2)]:[animation-delay:60ms] [&>*:nth-child(3)]:[animation-delay:120ms]">
         <Panel icon={<Mic2 className="size-4 text-primary" />} title="Vozes">
           {modeToggle}
           <SliderRow label="Vocais de apoio" value={settings.backing} onChange={v => setSetting("backing", v)} disabled={settings.mode === "original"} />

@@ -31,7 +31,7 @@ export default function Session() {
   }
 
   return (
-    <div className="mx-auto max-w-xl space-y-6 px-4 py-6">
+    <div className="mx-auto max-w-xl animate-fade-in space-y-6 px-4 py-6">
       <header className="flex items-center gap-3">
         <div className="grid size-10 place-items-center rounded-2xl bg-primary/15 text-xl">🎤</div>
         <div>
@@ -70,8 +70,8 @@ export default function Session() {
         </SectionTitle>
         {data && data.songs.length === 0 && <p className="text-sm text-muted-foreground">Nenhuma música pronta ainda.</p>}
         <div className="space-y-2">
-          {data?.songs.map(s => (
-            <Card key={s.id} size="sm" className="flex-row items-center gap-3 px-3 py-2.5">
+          {data?.songs.map((s, i) => (
+            <Card key={s.id} size="sm" className="animate-fade-in-up flex-row items-center gap-3 px-3 py-2.5" style={{ animationDelay: `${Math.min(i, 10) * 40}ms` }}>
               <Thumb src={songArt(s)} className="size-12" />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">{songTitle(s)}</p>

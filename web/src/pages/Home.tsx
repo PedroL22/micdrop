@@ -1,5 +1,5 @@
 import { Music } from "lucide-react"
-import { useMemo, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 
 import { SectionTitle } from "@/components/common"
 import { InviteDialog, MidiDialog } from "@/components/HostDialogs"
@@ -15,8 +15,16 @@ import type { Info, Job, Song } from "@/lib/types"
 export default function Home() {
   const [data, refresh] = usePolling(() =>
     Promise.all([api<Job[]>("/api/queue"), api<Song[]>("/api/songs")]).then(([queue, songs]) => ({ queue, songs })),
+    1200,
+    "home",
   )
-  const [info, refreshInfo] = usePolling(() => api<Info>("/api/info"), 15000)
+  const [info, refreshInfo] = usePolling(() => api<Info>("/api/info"), 15000, "info")
+  // cartões entram em cascata só quando a tela abre (não a cada atualização)
+  const [entering, setEntering] = useState(true)
+  useEffect(() => {
+    const t = setTimeout(() => setEntering(false), 1200)
+    return () => clearTimeout(t)
+  }, [])
   const [filter, setFilter] = useState("")
   const [prefs, setPrefs] = useLibraryPrefs()
 
@@ -28,7 +36,7 @@ export default function Home() {
   }, [songs, filter, prefs])
 
   return (
-    <div className="mx-auto max-w-4xl space-y-8 px-4 py-8">
+    <div className="mx-auto max-w-4xl animate-fade-in space-y-8 px-4 py-8">
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="grid size-11 place-items-center rounded-2xl bg-primary/15 text-2xl">🎤</div>
@@ -69,14 +77,14 @@ export default function Home() {
         )}
         {prefs.view === "grid" ? (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {shown.map(s => (
-              <SongCard key={s.id} song={s} onChange={refresh} />
+            {shown.map((s, i) => (
+              <SongCard key={s.id} song={s} onChange={refresh} index={i} animate={entering} />
             ))}
           </div>
         ) : (
           <div className="space-y-2">
-            {shown.map(s => (
-              <SongRow key={s.id} song={s} onChange={refresh} />
+            {shown.map((s, i) => (
+              <SongRow key={s.id} song={s} onChange={refresh} index={i} animate={entering} />
             ))}
           </div>
         )}

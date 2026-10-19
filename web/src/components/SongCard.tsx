@@ -3,6 +3,7 @@ import { useState } from "react"
 import { toast } from "sonner"
 
 import { Confirm, PreviewButton } from "@/components/common"
+import { ImageThumbnail } from "@/components/ImageThumbnail"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -14,7 +15,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { api, fmtTime, keyLabel, songTitle, wordsReady } from "@/lib/api"
+import { navigate } from "@/lib/router"
 import type { Song } from "@/lib/types"
+import { cn } from "@/lib/utils"
 
 function cardArt(s: Song) {
   if (s.cover) return `/media/${s.id}/cover.jpg?v=${s.cover_v || 0}`
@@ -23,8 +26,15 @@ function cardArt(s: Song) {
 }
 
 function openSong(s: Song, pick?: string) {
-  location.href = `/player/${s.id}${pick ? `?pick=${pick}` : ""}`
+  navigate(`/player/${s.id}${pick ? `?pick=${pick}` : ""}`)
 }
+
+// Nomes de View Transition: o cartão desliza ao reordenar e a imagem vira o palco do player
+export const vt = (name: string, cls: string) => ({ viewTransitionName: name, viewTransitionClass: cls }) as React.CSSProperties
+
+type ItemProps = { song: Song; onChange: () => void; index?: number; animate?: boolean }
+const enter = (animate?: boolean, index = 0) =>
+  animate ? { className: "animate-fade-in-up", style: { animationDelay: `${Math.min(index, 12) * 40}ms` } } : { className: "", style: {} }
 
 /** Selos: tom, estado da letra e clipe. */
 function SongBadges({ song }: { song: Song }) {
@@ -109,15 +119,22 @@ function SongActions({ song, onChange }: { song: Song; onChange: () => void }) {
 }
 
 /** Modo grade: cartão grande com a imagem. */
-export function SongCard({ song, onChange }: { song: Song; onChange: () => void }) {
+export function SongCard({ song, onChange, index, animate }: ItemProps) {
+  const e = enter(animate, index)
   return (
-    <Card className="group gap-0 overflow-hidden py-0">
+    <Card
+      className={cn(
+        "group gap-0 overflow-hidden py-0 transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-primary/10",
+        e.className,
+      )}
+      style={{ ...vt(`song-${song.id}`, "card"), ...e.style }}
+    >
       <button type="button" onClick={() => openSong(song)} className="relative block aspect-video w-full overflow-hidden text-left">
-        <img
+        <ImageThumbnail
           src={cardArt(song)}
-          alt=""
-          loading="lazy"
-          className="size-full object-cover transition-transform duration-300 group-hover:scale-105"
+          containerClassName="size-full"
+          className="duration-500 group-hover:scale-105"
+          style={vt(`art-${song.id}`, "art")}
         />
         <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
         <div className="absolute inset-0 grid place-items-center opacity-0 transition-opacity group-hover:opacity-100">
@@ -147,11 +164,16 @@ export function SongCard({ song, onChange }: { song: Song; onChange: () => void 
 }
 
 /** Modo lista: uma linha compacta por música. */
-export function SongRow({ song, onChange }: { song: Song; onChange: () => void }) {
+export function SongRow({ song, onChange, index, animate }: ItemProps) {
+  const e = enter(animate, index)
   return (
-    <Card size="sm" className="group flex-row items-center gap-3 px-2.5 py-2">
+    <Card
+      size="sm"
+      className={cn("group flex-row items-center gap-3 px-2.5 py-2 transition-colors duration-200 hover:bg-accent/40", e.className)}
+      style={{ ...vt(`song-${song.id}`, "card"), ...e.style }}
+    >
       <button type="button" onClick={() => openSong(song)} className="relative shrink-0 overflow-hidden rounded-md" aria-label={`Cantar ${songTitle(song)}`}>
-        <img src={cardArt(song)} alt="" loading="lazy" className="aspect-video w-24 object-cover" />
+        <ImageThumbnail src={cardArt(song)} containerClassName="aspect-video w-24" style={vt(`art-${song.id}`, "art")} />
         <span className="absolute inset-0 grid place-items-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
           <Mic className="size-4 text-white" />
         </span>

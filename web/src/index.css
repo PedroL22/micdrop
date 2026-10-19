@@ -166,3 +166,46 @@ body { transition: background-color .6s ease; }
 }
 .lyrics-armed .lyric-line { cursor: crosshair; }
 .lyrics-armed .lyric-line:hover { color: var(--color-primary); }
+
+/* ------------------------------------------------------------ animações (no estilo do 22ai) */
+@keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+@keyframes fade-in-up {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+/* `backwards`, não `forwards`: um fill forwards deixa a opacidade "presa" e o elemento
+   vira raiz de backdrop no Chromium, matando o backdrop-filter de quem está dentro. */
+.animate-fade-in { animation: fade-in .3s ease-out backwards; }
+.animate-fade-in-up { animation: fade-in-up .4s cubic-bezier(.22, 1, .36, 1) backwards; }
+
+/* ------------------------------------------------------------ transições de página (View Transitions) */
+::view-transition-old(root),
+::view-transition-new(root) {
+    animation-duration: 180ms;
+    animation-timing-function: ease-in-out;
+}
+/* cartões e imagens que mudam de lugar (ordenar, grade/lista, abrir o player) */
+::view-transition-group(*) {
+    animation-duration: 360ms;
+    animation-timing-function: cubic-bezier(.22, 1, .36, 1);
+}
+/* a imagem do cartão vira o palco do player sem achatar */
+::view-transition-old(*.art),
+::view-transition-new(*.art) {
+    height: 100%;
+    object-fit: cover;
+}
+::view-transition-old(*.card),
+::view-transition-new(*.card) {
+    height: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .animate-fade-in, .animate-fade-in-up { animation: none; }
+    ::view-transition-group(*),
+    ::view-transition-old(*),
+    ::view-transition-new(*) { animation: none !important; }
+}

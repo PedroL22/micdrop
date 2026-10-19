@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import { Thumb } from "@/components/common"
+import { ImageThumbnail } from "@/components/ImageThumbnail"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -251,7 +252,7 @@ function CoverTab({ song, onSong }: { song: Song; onSong: (s: Song) => void }) {
                 aria-pressed={inUse}
                 className={`relative overflow-hidden rounded-md ring-primary transition hover:ring-2 focus-visible:ring-2 ${inUse ? "ring-3" : ""}`}
               >
-                <img src={it.thumb} alt="" loading="lazy" className="aspect-square w-full object-cover" />
+                <ImageThumbnail src={it.thumb} containerClassName="aspect-square w-full" />
                 {inUse && (
                   <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-primary py-0.5 text-[11px] font-semibold text-primary-foreground">
                     <Check className="size-3" /> Em uso

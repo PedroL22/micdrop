@@ -343,12 +343,10 @@ def lyrics_use(song_id):
     except Exception:
         return jsonify(error="O site de letras (LRCLIB) não respondeu. Tente de novo em alguns segundos."), 502
     lyr = lyrics.build(item)
-    changes = {"lyrics": lyr, "offset": 0.0}
-    if item.get("trackName"):
-        changes["title"] = pipeline.clean_title(item["trackName"], item.get("artistName"))
-    if item.get("artistName"):
-        changes["artist"] = item["artistName"]
-    s = pipeline.update_song(song_id, changes)
+    cur = pipeline.get_song(song_id)
+    title, artist = lyrics.names_for(item, cur.get("title") or "", cur.get("artist") or "")
+    title = pipeline.clean_title(pipeline.JUNK.sub("", title).strip(), artist)
+    s = pipeline.update_song(song_id, {"lyrics": lyr, "offset": 0.0, "title": title, "artist": artist})
     if lyr["synced"] and not lyr.get("words_source"):
         s = pipeline.start_word_sync(song_id)
     return jsonify(public_song(s))
