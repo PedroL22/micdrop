@@ -64,7 +64,7 @@ function Content({ src, alt = "", className, containerClassName, style, loading 
         loading={loading}
         decoding="async"
         className={cn(
-          "size-full object-cover transition-[opacity,transform] duration-300 motion-reduce:transition-none",
+          "size-full object-cover transition-[opacity,scale,translate,transform] duration-300 motion-reduce:transition-none",
           className,
           status === "ready" ? "opacity-100" : "opacity-0",
         )}

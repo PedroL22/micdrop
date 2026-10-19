@@ -124,7 +124,7 @@ export function SongCard({ song, onChange, index, animate }: ItemProps) {
   return (
     <Card
       className={cn(
-        "group gap-0 overflow-hidden py-0 transition-[transform,box-shadow,border-color] duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-primary/10",
+        "group gap-0 overflow-hidden py-0 transition-[translate,box-shadow,border-color] duration-300 ease-out hover:-translate-y-1 hover:shadow-xl hover:shadow-primary/10",
         e.className,
       )}
       style={{ ...vt(`song-${song.id}`, "card"), ...e.style }}
