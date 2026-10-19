@@ -58,14 +58,14 @@
         <button class="btn" id="modeOriginal" title="Música original, com as vozes">Original</button>
         <button class="btn" id="modeInstrumental" title="Sem a voz, com controle de cada parte">Instrumental</button>
       </div>
-      <label class="ctl">Vocais de suporte <input type="range" id="volBacking" min="0" max="1" step="0.01"></label>
-      <label class="ctl">Vocais originais <input type="range" id="volLead" min="0" max="1" step="0.01"></label>
+      <label class="ctl">Vocais de suporte <input type="range" id="volBacking" min="0" max="1" step="0.05"></label>
+      <label class="ctl">Vocais originais <input type="range" id="volLead" min="0" max="1" step="0.05"></label>
       <label class="ctl">Nota <select id="note"></select></label>
       <label class="ctl">Escala <select id="scale"></select></label>
     </div>
     <div class="ctl-row">
-      <label class="ctl">Desfoque do fundo <input type="range" id="blur" min="0" max="1" step="0.01"></label>
-      <label class="ctl">Brilho do texto <input type="range" id="brightness" min="0.2" max="1" step="0.01"></label>
+      <label class="ctl">Desfoque do fundo <input type="range" id="blur" min="0" max="1" step="0.05"></label>
+      <label class="ctl">Brilho do texto <input type="range" id="brightness" min="0.2" max="1" step="0.05"></label>
       <button class="ctl btn hide-fs" id="pickLyrics" title="Trocar letra">🎤 Letra</button>
       <button class="ctl btn hide-fs" id="pickCover" title="Trocar arte de fundo">🖼️ Capa</button>
       <button class="ctl btn hide-fs" id="pickClip" title="Usar o videoclipe de fundo">🎬 Clipe</button>
@@ -89,7 +89,7 @@
       <span class="time" id="time">0:00 / 0:00</span>
       <input type="range" id="seek" min="0" max="1000" value="0">
       <span title="Volume geral">🔊</span>
-      <input type="range" class="vol" id="volMaster" min="0" max="1" step="0.01" value="1">
+      <input type="range" class="vol" id="volMaster" min="0" max="1" step="0.05" value="1">
     </div>
 
     <div class="sync">
