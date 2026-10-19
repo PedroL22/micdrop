@@ -18,6 +18,7 @@ Cópia do app que o Funky mostrou [neste vídeo](https://youtu.be/6i3vDPOjexA).
 - **Player**: Original / Instrumental, volume dos vocais de suporte e dos vocais originais,
   desfoque do fundo, brilho do texto, ajuste de sincronia (±0,1 s / ±0,5 s ou "Sync com mouse")
   e tela cheia (os controles aparecem quando o mouse vai para a parte de baixo).
+  **Clicar numa linha da letra pula a música para ela.**
 - **Clipe de fundo** (🎬): mostra o videoclipe, mudo e sincronizado com a música, atrás da letra.
   Use o vídeo da própria música ou busque outro (ex.: o clipe oficial, quando o áudio veio de uma
   versão "Topic"). Se o clipe tiver uma introdução diferente, acerte com "Ajuste do clipe".

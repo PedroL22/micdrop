@@ -162,12 +162,19 @@ $("#syncMouse").onclick = () => {
   if (armed) toast("Agora clique na linha da letra no instante em que ela começa a ser cantada");
 };
 
+// Clique numa linha: pula para o momento em que ela é cantada e toca.
+// Com "Sync com mouse" ligado, o clique acerta a sincronia em vez de pular.
 function onLineClick(i) {
-  if (!armed || !synced) return;
-  setOffset(position() - lines[i].t);
-  armed = false;
-  $("#syncMouse").classList.remove("on");
-  lyricsEl.classList.remove("armed");
+  if (!synced) return;
+  if (armed) {
+    setOffset(position() - lines[i].t);
+    armed = false;
+    $("#syncMouse").classList.remove("on");
+    lyricsEl.classList.remove("armed");
+    return;
+  }
+  seek(lines[i].t + song.offset);
+  play();
 }
 
 // ---------------------------------------------------------------- laço de animação

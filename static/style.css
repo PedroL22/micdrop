@@ -115,6 +115,8 @@ h2 input { max-width: 170px; font-size: 13px; padding: 6px 10px !important; font
 .lyrics .line.active { font-size: 26px; font-weight: 700; color: #fff; opacity: 1; }
 .lyrics.static { overflow-y: auto; }
 .lyrics.static .line { padding: 6px 0; }
+.lyrics:not(.static) .line { cursor: pointer; }
+.lyrics:not(.static):not(.armed) .line:not(.active):hover { color: #fff; opacity: 1; }
 .lyrics.armed .line { cursor: crosshair; }
 .lyrics.armed .line:hover { color: var(--accent-2); }
 .stage .msg { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; text-align: center; padding: 20px; }
