@@ -16,12 +16,13 @@ import requests
 import segno
 from flask import Flask, abort, jsonify, render_template, request, send_file
 
+import lyrics
 import midi_control
 import pipeline
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(ROOT, "config.json")
-UA = {"User-Agent": "KaraokeCaseiro/1.0 (https://github.com/)"}
+UA = lyrics.UA
 
 with open(CONFIG_FILE, encoding="utf-8") as f:
     CONFIG = json.load(f)
@@ -232,97 +233,19 @@ def media(song_id, name):
 
 # ---------------------------------------------------------------- letras (LRCLIB)
 
-LRC_LINE = re.compile(r"\[(\d+):(\d+(?:\.\d+)?)\]")
-LRC_WORD = re.compile(r"<(\d+):(\d+(?:\.\d+)?)>")
-
-
-def _word_times(body):
-    """LRC "enhanced": '<00:12.10> Que <00:12.40> bom' -> texto e [início, fim] de cada palavra."""
-    parts = LRC_WORD.split(body)
-    stamps, words, times = [], [], []
-    for i in range(1, len(parts), 3):
-        t = int(parts[i]) * 60 + float(parts[i + 1])
-        chunk = parts[i + 2].split()
-        stamps.append(t)
-        for w in chunk:
-            words.append(w)
-            times.append([t, None])
-    for k, wt in enumerate(times):
-        later = [s for s in stamps if s > wt[0]]
-        wt[1] = later[0] if later else wt[0] + 0.6
-        if k + 1 < len(times) and times[k + 1][0] > wt[0]:
-            wt[1] = min(wt[1], times[k + 1][0])
-    lead = parts[0].split()
-    if lead:  # texto antes da primeira marca: sem tempo próprio
-        return None, None
-    return " ".join(words), times
-
-
-def parse_lrc(text):
-    lines = []
-    for raw in (text or "").splitlines():
-        stamps = LRC_LINE.findall(raw)
-        body = LRC_LINE.sub("", raw).strip()
-        words = None
-        if LRC_WORD.search(body):
-            plain, words = _word_times(body)
-            body = plain if plain else LRC_WORD.sub("", body).strip()
-        body = re.sub(r"\s+", " ", body)
-        for mm, ss in stamps:
-            if body:
-                line = {"t": int(mm) * 60 + float(ss), "text": body}
-                if words and len(stamps) == 1:
-                    line["w"] = words
-                lines.append(line)
-    lines.sort(key=lambda l: l["t"])
-    return lines
-
-
-_lrc_cache = {}  # id do LRCLIB -> resultado completo da busca (já vem com a letra)
-
-
-def _lrclib(path, params=None, attempts=4):
-    """O LRCLIB às vezes responde 503 (instável) ou 429 (muitas buscas): tenta de novo com pausas."""
-    for attempt in range(attempts):
-        try:
-            r = requests.get(f"https://lrclib.net/api/{path}", params=params, headers=UA, timeout=15)
-        except requests.RequestException:
-            if attempt == attempts - 1:
-                raise
-        else:
-            if r.status_code not in (429, 500, 502, 503, 504) or attempt == attempts - 1:
-                r.raise_for_status()
-                return r.json()
-        time.sleep(1 + attempt * 1.5)
-
-
-def _lrclib_get(lrclib_id):
-    if lrclib_id in _lrc_cache:
-        return _lrc_cache[lrclib_id]
-    return _lrclib(f"get/{lrclib_id}")
-
-
 @app.get("/api/lyrics/search")
 def lyrics_search():
     q = (request.args.get("q") or "").strip()
     if not q:
         return jsonify([])
     try:
-        results = _lrclib("search", {"q": q})
+        results = lyrics.search(q)
     except Exception as exc:
         code = getattr(getattr(exc, "response", None), "status_code", None)
         why = f"erro {code}" if code else "sem conexão"
         return jsonify(error=f"O site de letras (LRCLIB) está instável agora ({why}). "
                              "Tente de novo em alguns segundos."), 502
-    out = []
-    for item in results:
-        if not (item.get("syncedLyrics") or item.get("plainLyrics")):
-            continue
-        _lrc_cache[item["id"]] = item
-        out.append({"id": item["id"], "track": item.get("trackName"),
-                    "artist": item.get("artistName"), "album": item.get("albumName"),
-                    "duration": item.get("duration") or 0,
-                    "synced": bool(item.get("syncedLyrics"))})
+    out = [lyrics.summary(i) for i in results]
     out.sort(key=lambda x: not x["synced"])  # sincronizadas primeiro
     return jsonify(out)
 
@@ -331,26 +254,18 @@ def lyrics_search():
 def lyrics_use(song_id):
     if not pipeline.get_song(song_id):
         abort(404)
-    lrclib_id = int(request.get_json(force=True).get("id"))
     try:
-        item = _lrclib_get(lrclib_id)
-    except Exception as exc:
+        item = lyrics.get(int(request.get_json(force=True).get("id")))
+    except Exception:
         return jsonify(error="O site de letras (LRCLIB) não respondeu. Tente de novo em alguns segundos."), 502
-    if item.get("syncedLyrics"):
-        lyrics = {"synced": True, "lines": parse_lrc(item["syncedLyrics"])}
-    else:
-        lines = [l.strip() for l in (item.get("plainLyrics") or "").splitlines() if l.strip()]
-        lyrics = {"synced": False, "lines": [{"t": None, "text": l} for l in lines]}
-    lyrics["source"] = f"lrclib:{lrclib_id}:{int(time.time())}"
-    if lyrics["synced"] and all(l.get("w") for l in lyrics["lines"]):
-        lyrics["words_source"] = "lrc"  # a própria letra já traz o tempo de cada palavra
-    changes = {"lyrics": lyrics, "offset": 0.0}
+    lyr = lyrics.build(item)
+    changes = {"lyrics": lyr, "offset": 0.0}
     if item.get("trackName"):
         changes["title"] = pipeline.clean_title(item["trackName"], item.get("artistName"))
     if item.get("artistName"):
         changes["artist"] = item["artistName"]
     s = pipeline.update_song(song_id, changes)
-    if lyrics["synced"] and not lyrics.get("words_source"):
+    if lyr["synced"] and not lyr.get("words_source"):
         s = pipeline.start_word_sync(song_id)
     return jsonify(public_song(s))
 

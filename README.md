@@ -8,6 +8,10 @@ Cópia do app que o Funky mostrou [neste vídeo](https://youtu.be/6i3vDPOjexA).
 
 - **Busca no YouTube** (nome ou link), mostra os 5 primeiros resultados e toca uma prévia
   de 5 segundos do meio da música.
+- **Tudo automático ao adicionar**: a música já entra pronta, com a letra sincronizada
+  (escolhida pela duração), o clipe de fundo e as palavras sincronizadas. Se o vídeo
+  adicionado for só áudio (canais "Topic"), o app procura o clipe oficial. Se não achar uma
+  letra confiável, dá para escolher no player.
 - **Fila de processamento**: cada música é baixada e separada na GPU com o modelo
   **BS-Roformer** em duas etapas: (1) todas as vozes × instrumental, (2) voz principal × vocais de apoio.
 - **Sessão pelo celular**: QR code em "Entrar na sessão". Cada pessoa adiciona músicas, vê o
@@ -85,6 +89,7 @@ Os números de CC e o canal também ficam no `config.json`.
 | `pipeline.py` | fila: download, separação e tom |
 | `separate.py` | roda a separação na GPU (processo à parte) |
 | `align.py` | descobre o tempo de cada palavra na voz isolada |
+| `lyrics.py` | letras do LRCLIB: busca, leitura do LRC e escolha automática |
 | `midi_control.py` | envio de nota/escala por MIDI |
 | `templates/`, `static/` | telas do PC, do celular e do player |
 | `config.json` | porta, modelos, quantidade de resultados, MIDI |

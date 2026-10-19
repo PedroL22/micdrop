@@ -173,16 +173,15 @@ function wordStatus() {
   btn.hidden = !(lyr && lyr.synced);
   if (!lyr || !lyr.synced) { el.textContent = ""; return; }
   const a = lyr.align || {};
-  if (a.status === "queued" || a.status === "running") {
-    el.textContent = `${a.stage || "Sincronizando palavras..."} ${Math.round((a.progress || 0) * 100)}%`;
-    btn.disabled = true;
-  } else {
-    btn.disabled = false;
-    if (a.status === "error") { el.textContent = "erro nas palavras"; el.title = a.error || ""; }
-    else if (lyr.words_source === "lrc") el.textContent = "palavras da letra ✓";
-    else if (lyr.words_source === "align") el.textContent = "palavras ✓";
-    else el.textContent = "palavras estimadas";
-  }
+  const busy = a.status === "queued" || a.status === "running";
+  const done = !!lyr.words_source && a.status !== "error";
+  // já sincronizada: não oferece sincronizar de novo
+  btn.hidden = busy || done;
+  el.title = a.status === "error" ? (a.error || "") : "";
+  if (busy) el.textContent = `${a.stage || "Sincronizando palavras..."} ${Math.round((a.progress || 0) * 100)}%`;
+  else if (a.status === "error") el.textContent = "erro ao sincronizar as palavras";
+  else if (done) el.textContent = "";
+  else el.textContent = "palavras estimadas";
 }
 
 let wordPoll = null;

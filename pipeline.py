@@ -20,6 +20,8 @@ import uuid
 
 import yt_dlp
 
+import lyrics
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(ROOT, "data")
 MODELS = os.path.join(ROOT, "models")
@@ -222,33 +224,84 @@ def start_video_download(song_id, source_id):
                                                "progress": 0.0, "file": None, "error": None}})
 
     def run():
-        last = [0.0]
-
-        def hook(d):
-            if d.get("status") == "downloading":
-                total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
-                p = d.get("downloaded_bytes", 0) / total if total else 0
-                if p - last[0] >= 0.05:
-                    last[0] = p
-                    _video_state(song_id, progress=round(min(p, 0.99), 2))
-
-        opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "noprogress": True,
-                "format": VIDEO_FORMAT, "outtmpl": os.path.join(folder, "video.%(ext)s"),
-                "progress_hooks": [hook]}
         try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(f"https://www.youtube.com/watch?v={source_id}", download=True)
-                path = ydl.prepare_filename(info)
-            if not os.path.exists(path):  # yt-dlp pode trocar a extensão
-                path = next(os.path.join(folder, n) for n in os.listdir(folder) if n.startswith("video."))
-            _video_state(song_id, status="ready", progress=1.0, file=os.path.basename(path),
-                         title=info.get("title"), duration=info.get("duration"))
+            done = _fetch_video(folder, source_id,
+                                lambda p: _video_state(song_id, progress=round(min(p, 0.99), 2)))
+            _video_state(song_id, **done)
         except Exception as exc:
             print(f"[clipe] erro em {song_id}: {exc}")
             _video_state(song_id, status="error", error=str(exc)[:300])
 
     threading.Thread(target=run, daemon=True, name=f"video-{song_id}").start()
     return meta
+
+
+def _fetch_video(folder, source_id, on_progress=None):
+    """Baixa a imagem do vídeo (sem áudio, até 720p) em <pasta>/video.<ext>."""
+    last = [0.0]
+
+    def hook(d):
+        if on_progress and d.get("status") == "downloading":
+            total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+            p = d.get("downloaded_bytes", 0) / total if total else 0
+            if p - last[0] >= 0.05:
+                last[0] = p
+                on_progress(p)
+
+    opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "noprogress": True,
+            "format": VIDEO_FORMAT, "outtmpl": os.path.join(folder, "video.%(ext)s"),
+            "progress_hooks": [hook]}
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        info = ydl.extract_info(f"https://www.youtube.com/watch?v={source_id}", download=True)
+        path = ydl.prepare_filename(info)
+    if not os.path.exists(path):  # yt-dlp pode trocar a extensão
+        path = next(os.path.join(folder, n) for n in os.listdir(folder) if n.startswith("video."))
+    return {"source": source_id, "status": "ready", "progress": 1.0, "error": None,
+            "file": os.path.basename(path), "title": info.get("title"), "duration": info.get("duration")}
+
+
+NOT_A_CLIP = re.compile(r"(?i)\b(lyrics?|letra|legendad[oa]|audio|áudio|ao vivo|live|cover|karaok\w*|"
+                        r"instrumental|remix|8d|slowed|reverb|sped up)\b")
+
+
+OFFICIAL = re.compile(r"(?i)(official|oficial|videoclipe|clipe|music video|m/v|mv)")
+
+
+def _pick_clip(info, artist, title, duration):
+    """Qual vídeo usar de fundo: o próprio, ou o clipe oficial se o adicionado for só áudio."""
+    vid = info["id"]
+    channel = info.get("channel") or info.get("uploader") or ""
+    art_track = channel.endswith(" - Topic") or (info.get("description") or "").startswith("Provided to YouTube by")
+    if not art_track:
+        return vid
+    results, seen = [], set()
+    for q in (f"{artist} {title} official music video", f"{artist} {title} clipe oficial"):
+        try:
+            for r in search_youtube(q, 8):
+                if r["id"] not in seen:
+                    seen.add(r["id"])
+                    results.append(r)
+        except Exception:
+            pass
+    want = lyrics._norm(title)
+    best, best_score = vid, None
+    for r in results:
+        if r["id"] == vid or r["channel"].endswith(" - Topic") or NOT_A_CLIP.search(r["title"]):
+            continue
+        if want and want not in lyrics._norm(r["title"]):
+            continue
+        if not OFFICIAL.search(r["title"]):  # sem "clipe/oficial/official video": provável cópia do áudio
+            continue
+        # clipes costumam ter edição própria (mais curtos/longos que o álbum)
+        if duration and r["duration"] and not (0.5 * duration <= r["duration"] <= 1.5 * duration):
+            continue
+        diff = abs((r["duration"] or duration or 0) - (duration or 0))
+        score = diff
+        if lyrics._norm(artist) and lyrics._norm(artist) in lyrics._norm(r["channel"]):
+            score -= 40  # publicado pelo canal do próprio artista
+        if best_score is None or score < best_score:
+            best, best_score = r["id"], score
+    return best
 
 
 def _video_state(song_id, **kw):
@@ -301,12 +354,49 @@ def start_word_sync(song_id):
     return get_song(song_id)
 
 
-def _run_align(song_id, source):
-    folder = song_dir(song_id)
+def _align_words(folder, lines, offset, on_stage=None, on_progress=None, job=None):
+    """Roda o align.py e devolve o tempo de cada palavra de cada linha."""
     inp = os.path.join(folder, "_align_in.json")
     out = os.path.join(folder, "_align_out.json")
     tail = []
-    code = -1
+    try:
+        _write_json(inp, {"lines": [{"t": l["t"], "text": l["text"]} for l in lines], "offset": offset})
+        proc = subprocess.Popen(
+            [sys.executable, "-u", os.path.join(ROOT, "align.py"), folder, inp, out],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+            encoding="utf-8", errors="replace", env=dict(os.environ, PYTHONIOENCODING="utf-8"),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if job is not None:
+            job["_proc"] = proc
+        last = -1.0
+        for line in proc.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            tail = (tail + [line])[-6:]
+            if line == "MODEL" and on_stage:
+                on_stage("Baixando modelo de palavras (só na primeira vez)...")
+            elif line.startswith("PROG:") and on_progress:
+                p = float(line[5:])
+                if p - last >= 0.05 or p >= 1:
+                    last = p
+                    on_progress(p)
+        code = proc.wait()
+        if job is not None:
+            job.pop("_proc", None)
+            if job.get("_cancel"):
+                raise Cancelled()
+        if code != 0 or not os.path.exists(out):
+            raise RuntimeError(" | ".join(tail[-3:]) or f"código {code}")
+        return _read_json(out, {}).get("words") or []
+    finally:
+        for path in (inp, out):
+            if os.path.exists(path):
+                os.remove(path)
+
+
+def _run_align(song_id, source):
+    folder = song_dir(song_id)
     try:
         with GPU_LOCK:
             meta = get_song(song_id)
@@ -314,30 +404,10 @@ def _run_align(song_id, source):
             if not lyr or lyr.get("source") != source:
                 return
             _set_align(song_id, source, status="running", stage="Sincronizando palavras...")
-            _write_json(inp, {"lines": [{"t": l["t"], "text": l["text"]} for l in lyr["lines"]],
-                              "offset": meta.get("offset") or 0})
-            proc = subprocess.Popen(
-                [sys.executable, "-u", os.path.join(ROOT, "align.py"), folder, inp, out],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                encoding="utf-8", errors="replace", env=dict(os.environ, PYTHONIOENCODING="utf-8"),
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-            last = -1.0
-            for line in proc.stdout:
-                line = line.strip()
-                if not line:
-                    continue
-                tail = (tail + [line])[-6:]
-                if line == "MODEL":
-                    _set_align(song_id, source, stage="Baixando modelo de palavras (só na primeira vez)...")
-                elif line.startswith("PROG:"):
-                    p = float(line[5:])
-                    if p - last >= 0.05 or p >= 1:
-                        last = p
-                        _set_align(song_id, source, progress=round(p, 2), stage="Sincronizando palavras...")
-            code = proc.wait()
-        if code != 0 or not os.path.exists(out):
-            raise RuntimeError(" | ".join(tail[-3:]) or f"código {code}")
-        words = _read_json(out, {}).get("words") or []
+            words = _align_words(
+                folder, lyr["lines"], meta.get("offset") or 0,
+                on_stage=lambda s: _set_align(song_id, source, stage=s),
+                on_progress=lambda p: _set_align(song_id, source, progress=round(p, 2)))
         with _lock:
             meta = get_song(song_id)
             lyr = (meta or {}).get("lyrics")
@@ -351,10 +421,6 @@ def _run_align(song_id, source):
     except Exception as exc:
         print(f"[palavras] erro em {song_id}: {exc}")
         _set_align(song_id, source, status="error", error=str(exc)[:300])
-    finally:
-        for path in (inp, out):
-            if os.path.exists(path):
-                os.remove(path)
 
 
 def delete_song(song_id):
@@ -551,10 +617,57 @@ def _process(job):
     _set(job, status="running", stage="Baixando do YouTube...", progress=0.0)
     info = _download(job, folder)
     artist, title = guess_artist_title(info)
+    duration = info.get("duration") or job["duration"]
+
+    # clipe de fundo: baixa em paralelo enquanto a placa de vídeo trabalha
+    clip = {}
+
+    def get_clip():
+        try:
+            clip.update(_fetch_video(folder, _pick_clip(info, artist, title, duration)))
+        except Exception as exc:
+            print(f"[clipe] erro em {vid}: {exc}")
+            clip.update(source=vid, status="error", error=str(exc)[:300])
+
+    clip_thread = threading.Thread(target=get_clip, daemon=True, name=f"clip-{vid}")
+    clip_thread.start()
+
+    # letra sincronizada (escolhida sozinha; se não achar, dá para escolher no player)
+    _set(job, stage="Buscando a letra...", progress=0.0)
+    lyr = None
+    try:
+        item = lyrics.find_for(artist, title, duration)
+        if item:
+            lyr = lyrics.build(item)
+            artist = item.get("artistName") or artist
+            title = clean_title(item.get("trackName") or title, artist)
+    except Exception as exc:
+        print(f"[letra] não achou para {vid}: {exc}")
+
     _set(job, stage="Aguardando a placa de vídeo...", progress=0.0)
     with GPU_LOCK:
         _set(job, stage="Preparando separação...", progress=0.0)
         res = _separate(job, folder)
+        if lyr and lyr["synced"] and not lyr.get("words_source"):
+            _set(job, stage="Sincronizando as palavras...", progress=0.0)
+            try:
+                words = _align_words(folder, lyr["lines"], 0,
+                                     on_stage=lambda s: _set(job, stage=s),
+                                     on_progress=lambda p: _set(job, progress=p), job=job)
+                for line, w in zip(lyr["lines"], words):
+                    line["w"] = w
+                lyr["words_source"] = "align"
+                lyr["align"] = {"status": "done", "progress": 1.0}
+            except Cancelled:
+                raise
+            except Exception as exc:
+                print(f"[palavras] erro em {vid}: {exc}")
+                lyr["align"] = {"status": "error", "error": str(exc)[:300]}
+
+    if clip_thread.is_alive():
+        _set(job, stage="Terminando de baixar o clipe...", progress=0.9)
+        clip_thread.join(timeout=600)
+    video = dict(clip) if clip.get("status") == "ready" else None
     meta = {
         "id": vid,
         "title": title or job["title"],
@@ -566,10 +679,12 @@ def _process(job):
         "cover": None,
         "key": res.get("key", "C"),
         "scale": res.get("scale", "Major"),
-        "lyrics": None,
+        "lyrics": lyr,
+        "video": video,
         "offset": 0.0,
         "settings": {"mode": "instrumental", "backing": 1.0, "lead": 0.0,
-                     "blur": 0.5, "brightness": 0.85},
+                     "blur": 0.5, "brightness": 0.85, "video_offset": 0,
+                     "bg": "video" if video else "cover"},
         "owner": job.get("owner"),
         "owner_name": job.get("owner_name"),
         "created": time.time(),
