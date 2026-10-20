@@ -19,6 +19,13 @@ import { api, fmtTime, keyLabel, songTitle, wordsReady } from "@/lib/api"
 import { navigate } from "@/lib/router"
 import type { Song } from "@/lib/types"
 import { cn } from "@/lib/utils"
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu"
 
 function cardArt(s: Song) {
   if (s.cover) return `/media/${s.id}/cover.jpg?v=${s.cover_v || 0}`
@@ -62,10 +69,18 @@ function SongBadges({ song }: { song: Song }) {
   )
 }
 
-/** Prévia + menu "⋮" (cantar, trocar letra/capa/clipe, apagar). */
-type MenuProps = { menuOpen: boolean; setMenuOpen: (open: boolean) => void }
+// ---------------------------------------------------------------- menu da música
 
-function SongActions({ song, onChange, menuOpen, setMenuOpen }: { song: Song; onChange: () => void } & MenuProps) {
+type MenuItemComponent = React.ComponentType<{
+  onSelect?: (event: Event) => void
+  variant?: "default" | "destructive"
+  children?: React.ReactNode
+}>
+type MenuSeparatorComponent = React.ComponentType<object>
+
+/** Ações da música (cantar, renomear, trocar letra/capa/clipe, apagar).
+ *  As mesmas opções aparecem no botão ⋮ e no clique direito (ContextMenu do shadcn). */
+function useSongMenu(song: Song, onChange: () => void) {
   const [confirm, setConfirm] = useState(false)
   const [rename, setRename] = useState(false)
 
@@ -79,41 +94,36 @@ function SongActions({ song, onChange, menuOpen, setMenuOpen }: { song: Song; on
     }
   }
 
-  return (
+  const items = (Item: MenuItemComponent, Separator: MenuSeparatorComponent) => (
     <>
-      <PreviewButton id={`song-${song.id}`} src={`/media/${song.id}/original.flac`} start={(song.duration || 60) / 2} variant="ghost" />
-      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" aria-label="Mais opções">
-            <MoreVertical />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent side="top" align="end" className="w-44">
-          <DropdownMenuItem onSelect={() => openSong(song)}>
-            <Mic /> Cantar
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setRename(true)}>
-            <Pencil /> Renomear
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => openSong(song, "lyrics")}>
-            <FileText /> Trocar letra
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => openSong(song, "cover")}>
-            <Image /> Trocar capa
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => openSong(song, "clip")}>
-            <Clapperboard /> Trocar clipe
-          </DropdownMenuItem>
-          {song.mine && (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onSelect={() => setConfirm(true)}>
-                <Trash2 /> Apagar
-              </DropdownMenuItem>
-            </>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <Item onSelect={() => openSong(song)}>
+        <Mic /> Cantar
+      </Item>
+      <Item onSelect={() => setRename(true)}>
+        <Pencil /> Renomear
+      </Item>
+      <Item onSelect={() => openSong(song, "lyrics")}>
+        <FileText /> Trocar letra
+      </Item>
+      <Item onSelect={() => openSong(song, "cover")}>
+        <Image /> Trocar capa
+      </Item>
+      <Item onSelect={() => openSong(song, "clip")}>
+        <Clapperboard /> Trocar clipe
+      </Item>
+      {song.mine && (
+        <>
+          <Separator />
+          <Item variant="destructive" onSelect={() => setConfirm(true)}>
+            <Trash2 /> Apagar
+          </Item>
+        </>
+      )}
+    </>
+  )
+
+  const dialogs = (
+    <>
       <RenameDialog song={song} open={rename} onOpenChange={setRename} onSaved={onChange} />
       <Confirm
         open={confirm}
@@ -124,99 +134,128 @@ function SongActions({ song, onChange, menuOpen, setMenuOpen }: { song: Song; on
       />
     </>
   )
+  return { items, dialogs }
+}
+
+type SongMenu = ReturnType<typeof useSongMenu>
+
+/** Prévia + botão ⋮. */
+function SongActions({ song, menu }: { song: Song; menu: SongMenu }) {
+  return (
+    <>
+      <PreviewButton id={`song-${song.id}`} src={`/media/${song.id}/original.flac`} start={(song.duration || 60) / 2} variant="ghost" />
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" aria-label="Mais opções">
+            <MoreVertical />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="top" align="end" className="w-44">
+          {menu.items(DropdownMenuItem as MenuItemComponent, DropdownMenuSeparator)}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
+  )
+}
+
+/** Clique direito em qualquer parte do cartão/linha abre o mesmo menu, onde o mouse está. */
+function WithContextMenu({ menu, children }: { menu: SongMenu; children: React.ReactElement }) {
+  return (
+    <>
+      <ContextMenu>
+        <ContextMenuTrigger asChild>{children}</ContextMenuTrigger>
+        <ContextMenuContent className="w-48">
+          {menu.items(ContextMenuItem as MenuItemComponent, ContextMenuSeparator)}
+        </ContextMenuContent>
+      </ContextMenu>
+      {menu.dialogs}
+    </>
+  )
 }
 
 /** Modo grade: cartão grande com a imagem. */
-/** Clique direito no cartão abre o menu ⋮ (em vez do menu do navegador). */
-function useContextMenu() {
-  const [menuOpen, setMenuOpen] = useState(false)
-  const onContextMenu = (ev: React.MouseEvent) => {
-    ev.preventDefault()
-    setMenuOpen(true)
-  }
-  return { menuOpen, setMenuOpen, onContextMenu }
-}
-
 export function SongCard({ song, onChange, index, animate }: ItemProps) {
   const e = enter(animate, index)
-  const menu = useContextMenu()
+  const menu = useSongMenu(song, onChange)
   return (
-    <Card
-      onContextMenu={menu.onContextMenu}
-      className={cn(
-        "group gap-0 overflow-hidden py-0 transition-[translate,box-shadow,border-color] duration-300 ease-out hover:-translate-y-1 hover:shadow-xl hover:shadow-primary/10",
-        e.className,
-      )}
-      style={{ ...vt(`song-${song.id}`, "card"), ...e.style }}
-    >
-      <button type="button" onClick={() => openSong(song)} className="relative block aspect-video w-full overflow-hidden text-left">
-        <ImageThumbnail
-          src={cardArt(song)}
-          containerClassName="size-full"
-          className="duration-500 group-hover:scale-105"
-          style={vt(`art-${song.id}`, "art")}
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
-        <div className="absolute inset-0 grid place-items-center opacity-0 transition-opacity group-hover:opacity-100">
-          <span className="flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-lg">
-            <Mic className="size-4" /> Cantar
+    <WithContextMenu menu={menu}>
+      <Card
+        className={cn(
+          "group gap-0 overflow-hidden py-0 transition-[translate,box-shadow,border-color] duration-300 ease-out hover:-translate-y-1 hover:shadow-xl hover:shadow-primary/10",
+          e.className,
+        )}
+        style={{ ...vt(`song-${song.id}`, "card"), ...e.style }}
+      >
+        <button type="button" onClick={() => openSong(song)} className="relative block aspect-video w-full overflow-hidden text-left">
+          <ImageThumbnail
+            src={cardArt(song)}
+            containerClassName="size-full"
+            className="duration-500 group-hover:scale-105"
+            style={vt(`art-${song.id}`, "art")}
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/20 to-transparent" />
+          <div className="absolute inset-0 grid place-items-center opacity-0 transition-opacity group-hover:opacity-100">
+            <span className="flex items-center gap-2 rounded-full bg-primary px-4 py-2 text-sm font-semibold text-primary-foreground shadow-lg">
+              <Mic className="size-4" /> Cantar
+            </span>
+          </div>
+          <span className="absolute top-2 right-2 rounded-md bg-black/60 px-1.5 py-0.5 text-xs text-white tabular-nums">
+            {fmtTime(song.duration)}
           </span>
+          <div className="absolute inset-x-0 bottom-0 p-3">
+            <p className="truncate font-semibold text-white">{songTitle(song)}</p>
+            <p className="truncate text-sm text-white/70">
+              {song.artist || song.channel}
+              {song.owner_name && <span> · por {song.owner_name}</span>}
+            </p>
+          </div>
+        </button>
+        <div className="flex items-center gap-1.5 p-2.5">
+          <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+            <SongBadges song={song} />
+          </div>
+          <SongActions song={song} menu={menu} />
         </div>
-        <span className="absolute top-2 right-2 rounded-md bg-black/60 px-1.5 py-0.5 text-xs text-white tabular-nums">
-          {fmtTime(song.duration)}
-        </span>
-        <div className="absolute inset-x-0 bottom-0 p-3">
-          <p className="truncate font-semibold text-white">{songTitle(song)}</p>
-          <p className="truncate text-sm text-white/70">
-            {song.artist || song.channel}
-            {song.owner_name && <span> · por {song.owner_name}</span>}
-          </p>
-        </div>
-      </button>
-      <div className="flex items-center gap-1.5 p-2.5">
-        <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
-          <SongBadges song={song} />
-        </div>
-        <SongActions song={song} onChange={onChange} menuOpen={menu.menuOpen} setMenuOpen={menu.setMenuOpen} />
-      </div>
-    </Card>
+      </Card>
+    </WithContextMenu>
   )
 }
 
 /** Modo lista: uma linha compacta por música. */
 export function SongRow({ song, onChange, index, animate }: ItemProps) {
   const e = enter(animate, index)
-  const menu = useContextMenu()
+  const menu = useSongMenu(song, onChange)
   return (
-    <Card
-      onContextMenu={menu.onContextMenu}
-      size="sm"
-      className={cn("group flex-row items-center gap-3 px-2.5 py-2 transition-colors duration-200 hover:bg-accent/40", e.className)}
-      style={{ ...vt(`song-${song.id}`, "card"), ...e.style }}
-    >
-      <button type="button" onClick={() => openSong(song)} className="relative shrink-0 overflow-hidden rounded-md" aria-label={`Cantar ${songTitle(song)}`}>
-        <ImageThumbnail src={cardArt(song)} containerClassName="aspect-video w-24" style={vt(`art-${song.id}`, "art")} />
-        <span className="absolute inset-0 grid place-items-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
-          <Mic className="size-4 text-white" />
-        </span>
-      </button>
-      <button type="button" onClick={() => openSong(song)} className="min-w-0 flex-1 text-left">
-        <p className="truncate font-medium">{songTitle(song)}</p>
-        <p className="truncate text-sm text-muted-foreground">
-          {song.artist || song.channel}
-          {song.owner_name && <span> · por {song.owner_name}</span>}
-        </p>
-      </button>
-      <div className="hidden flex-wrap justify-end gap-1.5 md:flex">
-        <SongBadges song={song} />
-      </div>
-      <span className="w-12 text-right text-sm tabular-nums text-muted-foreground">{fmtTime(song.duration)}</span>
-      <Button size="sm" onClick={() => openSong(song)} className="hidden sm:inline-flex">
-        <Mic /> Cantar
-      </Button>
-      <div className="flex">
-        <SongActions song={song} onChange={onChange} menuOpen={menu.menuOpen} setMenuOpen={menu.setMenuOpen} />
-      </div>
-    </Card>
+    <WithContextMenu menu={menu}>
+      <Card
+        size="sm"
+        className={cn("group flex-row items-center gap-3 px-2.5 py-2 transition-colors duration-200 hover:bg-accent/40", e.className)}
+        style={{ ...vt(`song-${song.id}`, "card"), ...e.style }}
+      >
+        <button type="button" onClick={() => openSong(song)} className="relative shrink-0 overflow-hidden rounded-md" aria-label={`Cantar ${songTitle(song)}`}>
+          <ImageThumbnail src={cardArt(song)} containerClassName="aspect-video w-24" style={vt(`art-${song.id}`, "art")} />
+          <span className="absolute inset-0 grid place-items-center bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">
+            <Mic className="size-4 text-white" />
+          </span>
+        </button>
+        <button type="button" onClick={() => openSong(song)} className="min-w-0 flex-1 text-left">
+          <p className="truncate font-medium">{songTitle(song)}</p>
+          <p className="truncate text-sm text-muted-foreground">
+            {song.artist || song.channel}
+            {song.owner_name && <span> · por {song.owner_name}</span>}
+          </p>
+        </button>
+        <div className="hidden flex-wrap justify-end gap-1.5 md:flex">
+          <SongBadges song={song} />
+        </div>
+        <span className="w-12 text-right text-sm tabular-nums text-muted-foreground">{fmtTime(song.duration)}</span>
+        <Button size="sm" onClick={() => openSong(song)} className="hidden sm:inline-flex">
+          <Mic /> Cantar
+        </Button>
+        <div className="flex">
+          <SongActions song={song} menu={menu} />
+        </div>
+      </Card>
+    </WithContextMenu>
   )
 }
