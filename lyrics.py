@@ -6,6 +6,8 @@ import unicodedata
 
 import requests
 
+import romanize
+
 UA = {"User-Agent": "KaraokeCaseiro/1.0 (https://github.com/)"}
 LRC_LINE = re.compile(r"\[(\d+):(\d+(?:\.\d+)?)\]")
 LRC_WORD = re.compile(r"<(\d+):(\d+(?:\.\d+)?)>")
@@ -43,7 +45,8 @@ def get(lrclib_id):
 
 
 def summary(item):
-    return {"id": item["id"], "track": item.get("trackName"), "artist": item.get("artistName"),
+    return {"id": item["id"], "track": romanize.name(item.get("trackName") or ""),
+            "artist": romanize.name(item.get("artistName") or ""),
             "album": item.get("albumName"), "duration": item.get("duration") or 0,
             "synced": bool(item.get("syncedLyrics"))}
 
@@ -100,6 +103,7 @@ def build(item):
     lyr["source"] = f"lrclib:{item['id']}:{int(time.time())}"
     if lyr["synced"] and lyr["lines"] and all(l.get("w") for l in lyr["lines"]):
         lyr["words_source"] = "lrc"  # a própria letra já traz o tempo de cada palavra
+    romanize.lyrics(lyr)  # japonês/coreano -> letras latinas
     return lyr
 
 

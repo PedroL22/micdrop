@@ -30,6 +30,8 @@ Cópia do app que o Funky mostrou [neste vídeo](https://youtu.be/6i3vDPOjexA).
 - **Biblioteca** com pesquisa, prévia, trocar letra 🎤, trocar arte 🖼️, apagar 🗑️ e o **tom** detectado
   (ex.: `A# Major`). Aparece `sem letra` até você escolher uma.
 - **Letra sincronizada** do [LRCLIB](https://lrclib.net) e **capas** do iTunes.
+- **Japonês e coreano romanizados**: letras e nomes viram letras latinas (romaji / romanização
+  oficial), e a sincronia das palavras funciona nelas.
 - **Ajustes valem para todas as músicas**: vozes, volume, desfoque, brilho e fundo (capa/clipe)
   ficam salvos e são usados em qualquer música. Só a sincronia da letra, o atraso do clipe e o tom
   são de cada música.
@@ -115,6 +117,7 @@ Os números de CC e o canal também ficam no `config.json`.
 | `separate.py` | roda a separação na GPU (processo à parte) |
 | `align.py` | descobre o tempo de cada palavra na voz isolada |
 | `lyrics.py` | letras do LRCLIB: busca, leitura do LRC e escolha automática; capa e duração do iTunes |
+| `romanize.py` | japonês/coreano para letras latinas |
 | `spotify.py` | músicas, playlists e álbuns do Spotify (página pública, sem login) |
 | `midi_control.py` | envio de nota/escala por MIDI |
 | `web/` | interface (React + [shadcn/ui](https://ui.shadcn.com)): telas do PC, do celular e do player. O `app.py` recompila sozinho ao iniciar quando ela muda; para mexer com recarga ao vivo, rode `npm run dev` em `web/` (abre na porta 5173 e conversa com o servidor na 5000) |
