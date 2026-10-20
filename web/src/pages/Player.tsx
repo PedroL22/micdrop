@@ -41,8 +41,22 @@ import { Pickers, type PickerTab } from "@/player/Pickers"
 const DEFAULTS: Settings = { mode: "instrumental", backing: 1, lead: 0, blur: 0.5, brightness: 0.85, bg: "video", video_offset: 0 }
 
 // Ajustes que valem para todas as músicas (guardados no servidor)
-type Prefs = Omit<Settings, "video_offset"> & { volume: number }
+type Prefs = Omit<Settings, "video_offset"> & { volume: number; translate: boolean }
 const PREF_KEYS = ["mode", "backing", "lead", "blur", "brightness", "bg"] as const
+
+// idioma do navegador para a tradução ("pt-BR" -> "pt"; chinês mantém a variante)
+const BROWSER_LANG = (() => {
+  const l = (navigator.language || "pt").toLowerCase()
+  return l.startsWith("zh") ? l.replace(/^zh-(hans|cn|sg).*/, "zh-CN").replace(/^zh-(hant|tw|hk).*/, "zh-TW") : l.split("-")[0]
+})()
+const LANG_NAME = (() => {
+  try {
+    const n = new Intl.DisplayNames([navigator.language || "pt-BR"], { type: "language" }).of(BROWSER_LANG) || BROWSER_LANG
+    return n.charAt(0).toUpperCase() + n.slice(1)
+  } catch {
+    return BROWSER_LANG
+  }
+})()
 
 function SliderRow({ label, value, onChange, min = 0, disabled }: { label: string; value: number; onChange: (v: number) => void; min?: number; disabled?: boolean }) {
   return (
@@ -92,7 +106,8 @@ export default function Player({ songId }: { songId: string }) {
   const [playing, setPlaying] = useState(false)
   const [pos, setPos] = useState(0)
   const [seeking, setSeeking] = useState<number | null>(null)
-  const [prefs, setPrefs] = useState<Prefs>({ ...DEFAULTS, volume: 1 })
+  const [prefs, setPrefs] = useState<Prefs>({ ...DEFAULTS, volume: 1, translate: true })
+  const [translations, setTranslations] = useState<(string | null)[] | null>(null)
   const [fs, setFs] = useState(false)
   const [showControls, setShowControls] = useState(false)
   const [armed, setArmed] = useState(false)
@@ -149,6 +164,20 @@ export default function Player({ songId }: { songId: string }) {
       setTimeout(() => !mounted.current && engine.close(), 500)
     }
   }, [engine])
+
+  // tradução da letra no idioma do navegador
+  const lyricsSource = song?.lyrics?.source
+  useEffect(() => {
+    setTranslations(null)
+    if (!lyricsSource || !prefs.translate) return
+    let alive = true
+    api<{ lines: (string | null)[] | null }>(`/api/songs/${songId}/translation?lang=${BROWSER_LANG}`)
+      .then(r => alive && setTranslations(r.lines))
+      .catch(() => {}) // sem tradução: a letra continua normal
+    return () => {
+      alive = false
+    }
+  }, [songId, lyricsSource, prefs.translate])
 
   // mixagem
   useEffect(() => {
@@ -328,6 +357,30 @@ export default function Player({ songId }: { songId: string }) {
     }
   }, [fs])
 
+  // em tela cheia o cursor some sozinho depois de parado (como no YouTube);
+  // volta ao mexer o mouse e não some enquanto estiver em cima dos controles
+  const [mouseIdle, setMouseIdle] = useState(false)
+  useEffect(() => {
+    if (!fs) {
+      setMouseIdle(false)
+      return
+    }
+    let t: ReturnType<typeof setTimeout>
+    const wake = (e?: Event) => {
+      setMouseIdle(false)
+      clearTimeout(t)
+      const overControls = e?.target instanceof Node && controlsRef.current?.contains(e.target)
+      if (!overControls) t = setTimeout(() => setMouseIdle(true), 2500)
+    }
+    wake()
+    const events = ["mousemove", "mousedown", "wheel", "keydown"] as const
+    events.forEach(ev => document.addEventListener(ev, wake))
+    return () => {
+      clearTimeout(t)
+      events.forEach(ev => document.removeEventListener(ev, wake))
+    }
+  }, [fs])
+
   // atalhos
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -454,6 +507,7 @@ export default function Player({ songId }: { songId: string }) {
         className={cn(
           "relative overflow-hidden bg-black",
           fs ? "fixed inset-0 z-40" : "aspect-video max-h-[52vh] w-full rounded-2xl transition-shadow duration-700",
+          fs && mouseIdle && "cursor-idle",
         )}
         style={
           fs
@@ -489,6 +543,7 @@ export default function Player({ songId }: { songId: string }) {
               armed={armed}
               big={fs}
               onLineClick={onLineClick}
+              translations={prefs.translate ? translations : null}
             />
           </div>
         )}
@@ -579,6 +634,15 @@ export default function Player({ songId }: { songId: string }) {
           </ToggleGroup>
           <SliderRow label="Desfoque do fundo" value={settings.blur} onChange={v => setSetting("blur", v)} />
           <SliderRow label="Brilho do texto" value={settings.brightness} min={0.2} onChange={v => setSetting("brightness", v)} />
+          {lyrics && (
+            <label className="flex items-center justify-between gap-3 text-sm">
+              <span>
+                Tradução ({LANG_NAME})
+                <span className="block text-xs text-muted-foreground">Pequena, embaixo de cada verso</span>
+              </span>
+              <Switch checked={prefs.translate} onCheckedChange={on => setPref({ translate: on })} />
+            </label>
+          )}
           {videoReady && settings.bg === "video" && (
             <label className="flex items-center justify-between gap-3 text-sm">
               <span>

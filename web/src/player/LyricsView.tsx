@@ -13,6 +13,7 @@ type Props = {
   armed: boolean
   big: boolean
   onLineClick: (i: number) => void
+  translations?: (string | null)[] | null // tradução de cada linha (pequena, embaixo)
 }
 
 function currentIndex(lines: LyricLine[], t: number) {
@@ -33,7 +34,7 @@ function currentIndex(lines: LyricLine[], t: number) {
  * A letra: a linha atual fica no meio, em destaque, e é pintada da esquerda para a direita
  * no ritmo das palavras. Atualiza o DOM direto (60x por segundo) sem re-renderizar o React.
  */
-export function LyricsView({ lines, synced, engine, offsetRef, armed, big, onLineClick }: Props) {
+export function LyricsView({ lines, synced, engine, offsetRef, armed, big, onLineClick, translations }: Props) {
   const box = useRef<HTMLDivElement>(null)
   const inner = useRef<HTMLDivElement>(null)
   const state = useRef({ idx: -2, wipe: -1, estimates: new Map<number, [number, number][]>() })
@@ -105,7 +106,7 @@ export function LyricsView({ lines, synced, engine, offsetRef, armed, big, onLin
     <div
       ref={box}
       className={cn(
-        "lyrics-mask absolute inset-0 px-6 text-center",
+        "lyrics-mask absolute inset-0 px-6 text-center select-none", // letra não é selecionável
         synced ? "overflow-hidden" : "overflow-y-auto py-8",
         armed && "lyrics-armed",
         big ? "text-[clamp(1.4rem,2.6vw,2.4rem)]" : "text-lg",
@@ -127,6 +128,7 @@ export function LyricsView({ lines, synced, engine, offsetRef, armed, big, onLin
                   <span className="w">{word}</span>
                 </Fragment>
               ))}
+            {translations?.[i] && <span className="lyric-tr">{translations[i]}</span>}
           </div>
         ))}
       </div>
