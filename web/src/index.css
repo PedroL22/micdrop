@@ -166,6 +166,9 @@ body { transition: background-color .6s ease; }
 }
 .lyrics-armed .lyric-line { cursor: crosshair; }
 
+/* tela cheia: cursor escondido depois de parado */
+.cursor-idle, .cursor-idle * { cursor: none !important; }
+
 /* tradução: pequena, embaixo do verso, sem o preenchimento das palavras */
 .lyric-tr {
     display: block;

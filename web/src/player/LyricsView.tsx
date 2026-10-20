@@ -106,7 +106,7 @@ export function LyricsView({ lines, synced, engine, offsetRef, armed, big, onLin
     <div
       ref={box}
       className={cn(
-        "lyrics-mask absolute inset-0 px-6 text-center",
+        "lyrics-mask absolute inset-0 px-6 text-center select-none", // letra não é selecionável
         synced ? "overflow-hidden" : "overflow-y-auto py-8",
         armed && "lyrics-armed",
         big ? "text-[clamp(1.4rem,2.6vw,2.4rem)]" : "text-lg",

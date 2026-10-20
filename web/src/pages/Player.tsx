@@ -357,6 +357,30 @@ export default function Player({ songId }: { songId: string }) {
     }
   }, [fs])
 
+  // em tela cheia o cursor some sozinho depois de parado (como no YouTube);
+  // volta ao mexer o mouse e não some enquanto estiver em cima dos controles
+  const [mouseIdle, setMouseIdle] = useState(false)
+  useEffect(() => {
+    if (!fs) {
+      setMouseIdle(false)
+      return
+    }
+    let t: ReturnType<typeof setTimeout>
+    const wake = (e?: Event) => {
+      setMouseIdle(false)
+      clearTimeout(t)
+      const overControls = e?.target instanceof Node && controlsRef.current?.contains(e.target)
+      if (!overControls) t = setTimeout(() => setMouseIdle(true), 2500)
+    }
+    wake()
+    const events = ["mousemove", "mousedown", "wheel", "keydown"] as const
+    events.forEach(ev => document.addEventListener(ev, wake))
+    return () => {
+      clearTimeout(t)
+      events.forEach(ev => document.removeEventListener(ev, wake))
+    }
+  }, [fs])
+
   // atalhos
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -483,6 +507,7 @@ export default function Player({ songId }: { songId: string }) {
         className={cn(
           "relative overflow-hidden bg-black",
           fs ? "fixed inset-0 z-40" : "aspect-video max-h-[52vh] w-full rounded-2xl transition-shadow duration-700",
+          fs && mouseIdle && "cursor-idle",
         )}
         style={
           fs
