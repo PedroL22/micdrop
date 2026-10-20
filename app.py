@@ -206,6 +206,7 @@ def search():
     try:
         res = pipeline.resolve_query(q, CONFIG.get("search_results", 5))
         res["cover"] = local_img(res.get("cover"))
+        pipeline.mark_duplicates(res["items"])
         for it in res["items"]:
             it["thumbnail"] = local_img(it.get("thumbnail"))
         return jsonify(res)

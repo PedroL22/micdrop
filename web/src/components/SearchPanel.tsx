@@ -1,5 +1,5 @@
-import { Check, ListMusic, Loader2, Plus, Search, Sparkles } from "lucide-react"
-import { useState } from "react"
+import { Check, ListMusic, Loader2, Plus, Search, Sparkles, X } from "lucide-react"
+import { useRef, useState } from "react"
 import { toast } from "sonner"
 
 import { PreviewButton, Thumb } from "@/components/common"
@@ -32,6 +32,7 @@ function SourceBadge({ source }: { source: SearchResponse["source"] }) {
 
 export function SearchPanel({ getName, onAdded, compact }: Props) {
   const [q, setQ] = useState("")
+  const input = useRef<HTMLInputElement>(null)
   const [loading, setLoading] = useState(false)
   const [res, setRes] = useState<SearchResponse | null>(null)
   const [added, setAdded] = useState<Record<string, "adding" | "done">>({})
@@ -74,7 +75,7 @@ export function SearchPanel({ getName, onAdded, compact }: Props) {
 
   async function addAll() {
     if (!res) return
-    const todo = res.items.filter(it => !added[keyOf(it)])
+    const todo = res.items.filter(it => !added[keyOf(it)] && !it.duplicate) // duplicatas ficam de fora
     setBulk("adding")
     stopPreview()
     try {
@@ -95,7 +96,11 @@ export function SearchPanel({ getName, onAdded, compact }: Props) {
     }
   }
 
+  // "dup" = a mesma música (artista + nome) já está na biblioteca ou na fila
+  const stateOf = (k: string, item: SearchResult): "adding" | "done" | "dup" | undefined =>
+    added[k] || (item.duplicate ? "dup" : undefined)
   const items = res?.items || []
+  const dupes = items.filter(it => it.duplicate).length
   const isPlaylist = res?.kind === "playlist"
 
   return (
@@ -116,12 +121,29 @@ export function SearchPanel({ getName, onAdded, compact }: Props) {
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
+              ref={input}
               value={q}
               onChange={e => setQ(e.target.value)}
               placeholder="Música, artista ou link (YouTube/Spotify)"
-              className="h-10 pl-8"
+              className="h-10 pr-9 pl-8"
               autoComplete="off"
             />
+            {q && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Limpar"
+                title="Limpar"
+                className="absolute top-1/2 right-1.5 -translate-y-1/2 animate-fade-in text-muted-foreground hover:text-foreground"
+                onClick={() => {
+                  setQ("")
+                  input.current?.focus()
+                }}
+              >
+                <X />
+              </Button>
+            )}
           </div>
           <Button type="submit" size="lg" className="h-10 px-4" disabled={loading}>
             {loading ? <Loader2 className="animate-spin" /> : <Search />}
@@ -160,6 +182,7 @@ export function SearchPanel({ getName, onAdded, compact }: Props) {
                 <SourceBadge source={res.source} />
                 <span className="text-xs text-muted-foreground">
                   {items.length} {items.length === 1 ? "música" : "músicas"}
+                  {dupes > 0 && ` · ${dupes} já ${dupes === 1 ? "está" : "estão"} na biblioteca ou na fila`}
                 </span>
               </div>
               <p className="mt-1 truncate font-semibold">{res.title}</p>
@@ -167,9 +190,9 @@ export function SearchPanel({ getName, onAdded, compact }: Props) {
                 <p className="text-xs text-muted-foreground">O Spotify mostra só as primeiras 100 faixas de cada playlist.</p>
               )}
             </div>
-            <Button onClick={addAll} disabled={bulk !== "idle"} variant={bulk === "done" ? "secondary" : "default"}>
+            <Button onClick={addAll} disabled={bulk !== "idle" || items.length === dupes} variant={bulk === "done" ? "secondary" : "default"}>
               {bulk === "adding" ? <Loader2 className="animate-spin" /> : bulk === "done" ? <Check /> : <Plus />}
-              {bulk === "done" ? "Na fila" : "Adicionar todas"}
+              {bulk === "done" ? "Na fila" : items.length - dupes === items.length ? "Adicionar todas" : `Adicionar ${items.length - dupes}`}
             </Button>
           </div>
         )}
@@ -178,7 +201,7 @@ export function SearchPanel({ getName, onAdded, compact }: Props) {
           <ul className={isPlaylist ? "max-h-[28rem] divide-y divide-border overflow-y-auto pr-1" : "divide-y divide-border"}>
             {items.map((item, i) => {
               const k = keyOf(item)
-              const state = added[k]
+              const state = stateOf(k, item)
               const src = previewSrc(item)
               return (
                 <li
@@ -203,9 +226,11 @@ export function SearchPanel({ getName, onAdded, compact }: Props) {
                     </p>
                   </div>
                   {src && <PreviewButton id={`res-${k}`} src={src} />}
-                  <Button onClick={() => add(item)} disabled={!!state} variant={state === "done" ? "secondary" : "default"}>
-                    {state === "adding" ? <Loader2 className="animate-spin" /> : state === "done" ? <Check /> : <Plus />}
-                    <span className="hidden sm:inline">{state === "done" ? "Na fila" : "Adicionar"}</span>
+                  <Button onClick={() => add(item)} disabled={!!state} variant={state === "done" || state === "dup" ? "secondary" : "default"} title={state === "dup" ? "Essa música já existe (mesmo artista e nome)" : undefined}>
+                    {state === "adding" ? <Loader2 className="animate-spin" /> : state === "done" || state === "dup" ? <Check /> : <Plus />}
+                    <span className="hidden sm:inline">
+                      {state === "dup" ? (item.duplicate === "fila" ? "Já na fila" : "Já na biblioteca") : state === "done" ? "Na fila" : "Adicionar"}
+                    </span>
                   </Button>
                 </li>
               )

@@ -5,6 +5,7 @@ export type SearchResult = {
   duration: number
   thumbnail: string | null
   preview?: string | null // trecho de 30 s do Spotify
+  duplicate?: "biblioteca" | "fila" | null // a mesma música (artista + nome) já existe
   spotify?: { id: string; title: string; artist: string; duration: number; cover: string | null }
 }
 
