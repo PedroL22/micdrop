@@ -1,18 +1,29 @@
 export type SearchResult = {
-  id: string
+  id: string | null // null = faixa do Spotify (o vídeo é procurado no YouTube depois)
   title: string
   channel: string
   duration: number
-  thumbnail: string
+  thumbnail: string | null
+  preview?: string | null // trecho de 30 s do Spotify
+  spotify?: { id: string; title: string; artist: string; duration: number; cover: string | null }
+}
+
+export type SearchResponse = {
+  kind: "search" | "video" | "playlist"
+  source: "youtube" | "spotify"
+  title: string | null
+  cover?: string | null
+  items: SearchResult[]
+  truncated: boolean
 }
 
 export type Job = {
   id: string
-  video_id: string
+  video_id: string | null
   title: string
   channel: string
   duration: number
-  thumbnail: string
+  thumbnail: string | null
   owner_name?: string
   status: "queued" | "running" | "error"
   stage: string

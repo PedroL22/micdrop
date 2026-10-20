@@ -36,18 +36,6 @@ def normalize(word):
     return re.sub(r"[^a-z']", "", s).strip("'")
 
 
-def even_split(words, start, end):
-    """Plano B: divide o tempo da linha pelas palavras, proporcional ao tamanho."""
-    sizes = [max(1, len(w)) for w in words]
-    total = sum(sizes)
-    out, t = [], start
-    for size in sizes:
-        d = (end - start) * size / total
-        out.append([round(t, 3), round(t + d, 3)])
-        t += d
-    return out
-
-
 def fill_gaps(spans, words, line_start, line_end):
     """Palavras sem letras alinháveis (números, símbolos) pegam o tempo entre as vizinhas."""
     for i, s in enumerate(spans):
@@ -108,10 +96,14 @@ def main():
                 spans[k] = [round(start + tspans[0].start * frame, 3),
                             round(start + tspans[-1].end * frame, 3)]
             spans = fill_gaps(spans, words, t0, fallback_end)
-        except Exception as exc:  # linha curta demais, só símbolos, etc.
+            if spans[0][0] > t0 + 3 or spans[-1][0] < t0:
+                raise ValueError("alinhamento fora da linha")
+        except Exception as exc:  # linha curta demais, só símbolos, alinhamento sem sentido...
             say(f"WARN:linha {i}: {exc}")
-            spans = even_split(words, t0, fallback_end)
-        # volta para o tempo da letra (sem offset), igual aos horários das linhas
+            result.append(None)  # a tela usa a duração padrão (web/src/player/wordTiming.ts)
+            continue
+        # volta para o tempo da letra (sem offset), igual aos horários das linhas.
+        # A tela só confia no INÍCIO de cada palavra e encaixa tudo dentro da linha.
         result.append([[round(s - offset, 3), round(e - offset, 3)] for s, e in spans])
 
     with open(outp, "w", encoding="utf-8") as f:

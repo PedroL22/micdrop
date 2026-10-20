@@ -8,6 +8,11 @@ Cópia do app que o Funky mostrou [neste vídeo](https://youtu.be/6i3vDPOjexA).
 
 - **Busca no YouTube** (nome ou link), mostra os 5 primeiros resultados e toca uma prévia
   de 5 segundos do meio da música.
+- **Playlists do YouTube e Spotify**: cole o link de uma playlist do YouTube, ou de uma música,
+  playlist ou álbum do Spotify, e use "Adicionar todas". As faixas do Spotify são procuradas no
+  YouTube pela mesma duração (o Spotify mostra no máximo 100 faixas por playlist sem login).
+- **Capa oficial**: cada música ganha a capa do álbum (Spotify ou iTunes); dá para trocar ou
+  remover na aba Capa do player, e **renomear** pelo menu ⋮ ou pelo lápis ao lado do título.
 - **Tudo automático ao adicionar**: a música já entra pronta, com a letra sincronizada
   (escolhida pela duração), o clipe de fundo e as palavras sincronizadas. Se o vídeo
   adicionado for só áudio (canais "Topic"), o app procura o clipe oficial. Se não achar uma
@@ -52,6 +57,15 @@ Cópia do app que o Funky mostrou [neste vídeo](https://youtu.be/6i3vDPOjexA).
 3. A primeira música também baixa os dois modelos de IA (~1,5 GB, só uma vez).
 
 Se o Windows perguntar sobre o firewall, **permita em redes privadas** — senão os celulares não conectam.
+
+### YouTube bloqueando ("confirme que você não é um robô")
+
+Depois de muitos downloads seguidos (uma playlist inteira, por exemplo), o YouTube pode bloquear
+este computador por algumas horas. A fila percebe, espera e tenta de novo sozinha. Para evitar de
+vez, envie os cookies do YouTube em **Configurações › YouTube**: instale a extensão
+*Get cookies.txt LOCALLY* no Chrome, abra o youtube.com logado, clique em *Export* e envie o
+arquivo. O app também precisa do Node.js (ou Deno/Bun) para o YouTube liberar os vídeos; o
+`setup.ps1` instala.
 
 Tempo de separação: numa RTX 3050 6 GB, uma música de 3–4 min leva alguns minutos.
 Sem placa NVIDIA funciona, mas no processador fica bem lento. O `"fast_separation": true` do
@@ -100,7 +114,8 @@ Os números de CC e o canal também ficam no `config.json`.
 | `pipeline.py` | fila: download, separação e tom |
 | `separate.py` | roda a separação na GPU (processo à parte) |
 | `align.py` | descobre o tempo de cada palavra na voz isolada |
-| `lyrics.py` | letras do LRCLIB: busca, leitura do LRC e escolha automática |
+| `lyrics.py` | letras do LRCLIB: busca, leitura do LRC e escolha automática; capa e duração do iTunes |
+| `spotify.py` | músicas, playlists e álbuns do Spotify (página pública, sem login) |
 | `midi_control.py` | envio de nota/escala por MIDI |
 | `web/` | interface (React + [shadcn/ui](https://ui.shadcn.com)): telas do PC, do celular e do player. O `app.py` recompila sozinho ao iniciar quando ela muda; para mexer com recarga ao vivo, rode `npm run dev` em `web/` (abre na porta 5173 e conversa com o servidor na 5000) |
 | `config.json` | porta, modelos, quantidade de resultados, MIDI |

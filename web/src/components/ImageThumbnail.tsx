@@ -23,10 +23,11 @@ function Content({ src, alt = "", className, containerClassName, style, loading 
     if (!image) return
     let cancelled = false
     const onLoad = () => {
-      image
-        .decode()
+      // decodifica antes de mostrar (sem "pintar" aos pedaços), mas sem esperar para sempre:
+      // em abas em segundo plano o navegador pode adiar o decode indefinidamente
+      Promise.race([image.decode(), new Promise(ok => setTimeout(ok, 200))])
         .then(() => !cancelled && setStatus("ready"))
-        .catch(() => !cancelled && setStatus("error"))
+        .catch(() => !cancelled && setStatus(image.naturalWidth > 0 ? "ready" : "error"))
     }
     const onError = () => !cancelled && setStatus("error")
     image.addEventListener("load", onLoad)

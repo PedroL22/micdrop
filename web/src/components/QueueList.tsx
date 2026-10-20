@@ -36,7 +36,7 @@ export function QueueList({ jobs, onChange }: { jobs: Job[]; onChange: () => voi
           const err = job.status === "error"
           return (
             <Card key={job.id} size="sm" className="animate-fade-in-up flex-row items-center gap-3 px-3 py-3">
-              <Thumb src={job.thumbnail} className="aspect-video w-24" />
+              <Thumb src={job.thumbnail || ""} className={job.video_id ? "aspect-video w-24" : "size-14"} />
               <div className="min-w-0 flex-1 space-y-1">
                 <p className="truncate text-sm font-medium">{job.title}</p>
                 <p className="truncate text-xs text-muted-foreground">
