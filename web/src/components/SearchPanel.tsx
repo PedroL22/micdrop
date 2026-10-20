@@ -1,5 +1,5 @@
-import { Check, ListMusic, Loader2, Plus, Search, Sparkles } from "lucide-react"
-import { useState } from "react"
+import { Check, ListMusic, Loader2, Plus, Search, Sparkles, X } from "lucide-react"
+import { useRef, useState } from "react"
 import { toast } from "sonner"
 
 import { PreviewButton, Thumb } from "@/components/common"
@@ -32,6 +32,7 @@ function SourceBadge({ source }: { source: SearchResponse["source"] }) {
 
 export function SearchPanel({ getName, onAdded, compact }: Props) {
   const [q, setQ] = useState("")
+  const input = useRef<HTMLInputElement>(null)
   const [loading, setLoading] = useState(false)
   const [res, setRes] = useState<SearchResponse | null>(null)
   const [added, setAdded] = useState<Record<string, "adding" | "done">>({})
@@ -120,12 +121,29 @@ export function SearchPanel({ getName, onAdded, compact }: Props) {
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
+              ref={input}
               value={q}
               onChange={e => setQ(e.target.value)}
               placeholder="Música, artista ou link (YouTube/Spotify)"
-              className="h-10 pl-8"
+              className="h-10 pr-9 pl-8"
               autoComplete="off"
             />
+            {q && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Limpar"
+                title="Limpar"
+                className="absolute top-1/2 right-1.5 -translate-y-1/2 animate-fade-in text-muted-foreground hover:text-foreground"
+                onClick={() => {
+                  setQ("")
+                  input.current?.focus()
+                }}
+              >
+                <X />
+              </Button>
+            )}
           </div>
           <Button type="submit" size="lg" className="h-10 px-4" disabled={loading}>
             {loading ? <Loader2 className="animate-spin" /> : <Search />}
