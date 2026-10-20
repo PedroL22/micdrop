@@ -137,7 +137,13 @@ def names_for(item, title, artist):
     Usa os nomes do LRCLIB (costumam vir mais limpos) só se o artista bater;
     se vierem trocados (música no lugar do artista), desinverte; senão mantém os atuais."""
     t, a = item.get("trackName") or "", item.get("artistName") or ""
-    near = lambda x, y: bool(_norm(x)) and bool(_norm(y)) and (_norm(x) in _norm(y) or _norm(y) in _norm(x))
+
+    def near(x, y):
+        # "Charlie Brown Jr" = "Charlie Brown Jr."; mas "Rick Astley - Never Gonna..." != "Rick Astley"
+        nx, ny = _norm(x), _norm(y)
+        if not nx or not ny or not (nx in ny or ny in nx):
+            return False
+        return min(len(nx), len(ny)) / max(len(nx), len(ny)) >= 0.7
     if near(a, artist):
         return t or title, a
     if near(t, artist) and near(a, title):  # campos trocados no LRCLIB
@@ -196,17 +202,23 @@ def typical_duration(items):
 NOT_ALBUM_VERSION = re.compile(r"(?i)\b(live|ao vivo|remix|acoustic|ac[uú]stico|instrumental|karaoke|version|edit)\b")
 
 
-def itunes_duration(artist, title):
-    """Duração da faixa no iTunes (versão do álbum). None se não achar com segurança."""
+_itunes_cache = {}
+
+
+def itunes_match(artist, title):
+    """A faixa no iTunes (versão do álbum): {"duration", "artwork"}. None se não achar com segurança."""
+    key = (_norm(artist), _norm(core_title(title)))
+    if key in _itunes_cache:
+        return _itunes_cache[key]
     try:
         r = requests.get("https://itunes.apple.com/search", headers=UA, timeout=15, params={
             "term": f"{artist} {core_title(title)}", "media": "music", "entity": "song", "limit": 15})
         r.raise_for_status()
         results = r.json().get("results", [])
     except Exception:
-        return None
-    want_artist, want_title = _norm(artist), _norm(core_title(title))
-    durs = []
+        return None  # sem cache: tenta de novo na próxima
+    want_artist, want_title = key
+    found = []
     for t in results:
         name = t.get("trackName") or ""
         if NOT_ALBUM_VERSION.search(name) or not t.get("trackTimeMillis"):
@@ -216,10 +228,28 @@ def itunes_duration(artist, title):
             continue
         if got_title != want_title:
             continue
-        durs.append(round(t["trackTimeMillis"] / 1000))
-    if not durs:
+        found.append(t)
+    match = None
+    if found:
+        durs = [round(t["trackTimeMillis"] / 1000) for t in found]
+        dur = max(durs, key=lambda d: (sum(1 for x in durs if abs(x - d) <= 2), -d))
+        best = next(t for t in found if abs(round(t["trackTimeMillis"] / 1000) - dur) <= 2)
+        match = {"duration": dur, "artwork": best.get("artworkUrl100")}
+    _itunes_cache[key] = match
+    return match
+
+
+def itunes_duration(artist, title):
+    m = itunes_match(artist, title)
+    return m["duration"] if m else None
+
+
+def itunes_artwork(artist, title, size=1000):
+    """Capa do álbum no iTunes no tamanho pedido (mesmo endereço que a aba Capa usa)."""
+    m = itunes_match(artist, title)
+    if not m or not m.get("artwork"):
         return None
-    return max(durs, key=lambda d: (sum(1 for x in durs if abs(x - d) <= 2), -d))
+    return re.sub(r"/\d+x\d+bb\.", f"/{size}x{size}bb.", m["artwork"])
 
 
 def official_duration(artist, title, items):

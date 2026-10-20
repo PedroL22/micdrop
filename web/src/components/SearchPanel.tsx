@@ -1,32 +1,51 @@
-import { Check, Loader2, Plus, Search, Sparkles } from "lucide-react"
+import { Check, ListMusic, Loader2, Plus, Search, Sparkles } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
 import { PreviewButton, Thumb } from "@/components/common"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
-import { api, fmtTime } from "@/lib/api"
+import { api, fmtTime, searchApi } from "@/lib/api"
 import { stopPreview } from "@/lib/preview"
-import type { SearchResult } from "@/lib/types"
+import type { SearchResponse, SearchResult } from "@/lib/types"
 
 type Props = { getName?: () => string; onAdded?: () => void; compact?: boolean }
+
+const keyOf = (it: SearchResult) => it.id || `sp-${it.spotify?.id}`
+
+function previewSrc(it: SearchResult) {
+  if (it.id) return `/api/preview/${it.id}`
+  if (it.preview) return `/api/preview_spotify?u=${encodeURIComponent(it.preview)}`
+  return null
+}
+
+function SourceBadge({ source }: { source: SearchResponse["source"] }) {
+  return source === "spotify" ? (
+    <Badge className="border-transparent bg-[#1db954]/15 text-[#1ed760]">Spotify</Badge>
+  ) : (
+    <Badge className="border-transparent bg-red-500/15 text-red-400">YouTube</Badge>
+  )
+}
 
 export function SearchPanel({ getName, onAdded, compact }: Props) {
   const [q, setQ] = useState("")
   const [loading, setLoading] = useState(false)
-  const [results, setResults] = useState<SearchResult[] | null>(null)
+  const [res, setRes] = useState<SearchResponse | null>(null)
   const [added, setAdded] = useState<Record<string, "adding" | "done">>({})
+  const [bulk, setBulk] = useState<"idle" | "adding" | "done">("idle")
 
   async function search(e: React.FormEvent) {
     e.preventDefault()
     if (!q.trim()) return
     stopPreview()
     setLoading(true)
-    setResults(null)
+    setRes(null)
+    setBulk("idle")
     try {
-      setResults(await api<SearchResult[]>("/api/search?q=" + encodeURIComponent(q.trim())))
+      setRes(await searchApi(q.trim()))
     } catch (err) {
       toast.error((err as Error).message)
     } finally {
@@ -35,21 +54,49 @@ export function SearchPanel({ getName, onAdded, compact }: Props) {
   }
 
   async function add(item: SearchResult) {
-    setAdded(a => ({ ...a, [item.id]: "adding" }))
+    const k = keyOf(item)
+    setAdded(a => ({ ...a, [k]: "adding" }))
     try {
       await api("/api/queue", { method: "POST", body: { entry: item, name: getName?.() || "" } })
-      setAdded(a => ({ ...a, [item.id]: "done" }))
+      setAdded(a => ({ ...a, [k]: "done" }))
+      setQ("") // pronto para a próxima busca (os resultados continuam na tela)
       stopPreview()
       toast.success("Música na fila!", { description: "A letra, o clipe e a sincronia vêm sozinhos." })
       onAdded?.()
     } catch (err) {
       setAdded(a => {
-        const { [item.id]: _, ...rest } = a
+        const { [k]: _, ...rest } = a
         return rest
       })
       toast.error((err as Error).message)
     }
   }
+
+  async function addAll() {
+    if (!res) return
+    const todo = res.items.filter(it => !added[keyOf(it)])
+    setBulk("adding")
+    stopPreview()
+    try {
+      const r = await api<{ added: number; skipped: number }>("/api/queue/bulk", {
+        method: "POST",
+        body: { entries: todo, name: getName?.() || "" },
+      })
+      setAdded(a => ({ ...a, ...Object.fromEntries(todo.map(it => [keyOf(it), "done" as const])) }))
+      setBulk("done")
+      setQ("")
+      toast.success(`${r.added} ${r.added === 1 ? "música adicionada" : "músicas adicionadas"} à fila`, {
+        description: r.skipped ? `${r.skipped} já estavam na biblioteca ou na fila.` : "Elas vão sendo preparadas uma de cada vez.",
+      })
+      onAdded?.()
+    } catch (err) {
+      setBulk("idle")
+      toast.error((err as Error).message)
+    }
+  }
+
+  const items = res?.items || []
+  const isPlaylist = res?.kind === "playlist"
 
   return (
     <Card>
@@ -59,7 +106,8 @@ export function SearchPanel({ getName, onAdded, compact }: Props) {
         </CardTitle>
         {!compact && (
           <CardDescription>
-            Busque pelo nome ou cole um link do YouTube. A letra, o clipe e a sincronia das palavras vêm automaticamente.
+            Busque pelo nome ou cole um link do YouTube ou do Spotify (música, playlist ou álbum). A letra, o clipe e a
+            sincronia das palavras vêm automaticamente.
           </CardDescription>
         )}
       </CardHeader>
@@ -70,7 +118,7 @@ export function SearchPanel({ getName, onAdded, compact }: Props) {
             <Input
               value={q}
               onChange={e => setQ(e.target.value)}
-              placeholder="Artista, música ou link do YouTube"
+              placeholder="Música, artista ou link (YouTube/Spotify)"
               className="h-10 pl-8"
               autoComplete="off"
             />
@@ -95,17 +143,57 @@ export function SearchPanel({ getName, onAdded, compact }: Props) {
           </div>
         )}
 
-        {results && results.length === 0 && (
-          <p className="py-2 text-sm text-muted-foreground">Nada encontrado. Tente outro nome.</p>
+        {res && items.length === 0 && <p className="py-2 text-sm text-muted-foreground">Nada encontrado. Tente outro nome.</p>}
+
+        {/* cabeçalho da playlist / álbum */}
+        {res && isPlaylist && items.length > 0 && (
+          <div className="flex animate-fade-in-up items-center gap-3 rounded-xl bg-muted/50 p-3">
+            {res.cover ? (
+              <Thumb src={res.cover} className="size-16" />
+            ) : (
+              <div className="grid size-16 place-items-center rounded-md bg-muted">
+                <ListMusic className="size-6 text-muted-foreground" />
+              </div>
+            )}
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <SourceBadge source={res.source} />
+                <span className="text-xs text-muted-foreground">
+                  {items.length} {items.length === 1 ? "música" : "músicas"}
+                </span>
+              </div>
+              <p className="mt-1 truncate font-semibold">{res.title}</p>
+              {res.truncated && (
+                <p className="text-xs text-muted-foreground">O Spotify mostra só as primeiras 100 faixas de cada playlist.</p>
+              )}
+            </div>
+            <Button onClick={addAll} disabled={bulk !== "idle"} variant={bulk === "done" ? "secondary" : "default"}>
+              {bulk === "adding" ? <Loader2 className="animate-spin" /> : bulk === "done" ? <Check /> : <Plus />}
+              {bulk === "done" ? "Na fila" : "Adicionar todas"}
+            </Button>
+          </div>
         )}
 
-        {results && results.length > 0 && (
-          <ul className="divide-y divide-border">
-            {results.map((item, i) => {
-              const state = added[item.id]
+        {items.length > 0 && (
+          <ul className={isPlaylist ? "max-h-[28rem] divide-y divide-border overflow-y-auto pr-1" : "divide-y divide-border"}>
+            {items.map((item, i) => {
+              const k = keyOf(item)
+              const state = added[k]
+              const src = previewSrc(item)
               return (
-                <li key={item.id} className="flex animate-fade-in-up items-center gap-3 py-2" style={{ animationDelay: `${i * 50}ms` }}>
-                  <Thumb src={item.thumbnail} className="aspect-video w-20 sm:w-24" />
+                <li
+                  key={k}
+                  className="flex animate-fade-in-up items-center gap-3 py-2"
+                  style={{ animationDelay: `${Math.min(i, 12) * 40}ms` }}
+                >
+                  {isPlaylist && <span className="w-6 shrink-0 text-right text-xs tabular-nums text-muted-foreground">{i + 1}</span>}
+                  {item.thumbnail ? (
+                    <Thumb src={item.thumbnail} className={item.spotify ? "size-12" : "aspect-video w-20 sm:w-24"} />
+                  ) : (
+                    <div className="grid size-12 shrink-0 place-items-center rounded-md bg-muted">
+                      <ListMusic className="size-4 text-muted-foreground" />
+                    </div>
+                  )}
                   <div className="min-w-0 flex-1">
                     <p className="line-clamp-2 text-sm font-medium leading-snug" title={item.title}>
                       {item.title}
@@ -114,7 +202,7 @@ export function SearchPanel({ getName, onAdded, compact }: Props) {
                       {item.channel} · {fmtTime(item.duration)}
                     </p>
                   </div>
-                  <PreviewButton id={`yt-${item.id}`} src={`/api/preview/${item.id}`} />
+                  {src && <PreviewButton id={`res-${k}`} src={src} />}
                   <Button onClick={() => add(item)} disabled={!!state} variant={state === "done" ? "secondary" : "default"}>
                     {state === "adding" ? <Loader2 className="animate-spin" /> : state === "done" ? <Check /> : <Plus />}
                     <span className="hidden sm:inline">{state === "done" ? "Na fila" : "Adicionar"}</span>

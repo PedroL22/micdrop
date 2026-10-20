@@ -4,6 +4,7 @@ Abra http://localhost:5000 no PC que toca o som. Os convidados entram pelo QR co
 (precisam estar no mesmo Wi-Fi) e colocam músicas na fila pelo celular.
 """
 
+import hashlib
 import io
 import json
 import os
@@ -13,6 +14,9 @@ import socket
 import subprocess
 import time
 import webbrowser
+
+from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import quote
 
 import requests
 import segno
@@ -199,7 +203,11 @@ def search():
     if not q:
         return jsonify([])
     try:
-        return jsonify(pipeline.search_youtube(q, CONFIG.get("search_results", 5)))
+        res = pipeline.resolve_query(q, CONFIG.get("search_results", 5))
+        res["cover"] = local_img(res.get("cover"))
+        for it in res["items"]:
+            it["thumbnail"] = local_img(it.get("thumbnail"))
+        return jsonify(res)
     except Exception as exc:
         return jsonify(error=f"Falha na busca: {exc}"), 502
 
@@ -213,6 +221,34 @@ def preview(video_id):
     except Exception as exc:
         return jsonify(error=f"Falha no preview: {exc}"), 502
     return send_file(path, mimetype="audio/mpeg", max_age=3600)
+
+
+@app.get("/api/preview_spotify")
+def preview_spotify():
+    try:
+        path = pipeline.preview_spotify(request.args.get("u") or "", CONFIG.get("preview_seconds", 5))
+    except ValueError:
+        abort(400)
+    except Exception as exc:
+        return jsonify(error=f"Falha no preview: {exc}"), 502
+    return send_file(path, mimetype="audio/mpeg", max_age=3600)
+
+
+@app.post("/api/queue/bulk")
+def queue_bulk():
+    """Adiciona várias músicas de uma vez (playlist do YouTube ou do Spotify)."""
+    body = request.get_json(force=True)
+    added, skipped = 0, 0
+    for entry in body.get("entries") or []:
+        try:
+            job, err = pipeline.add_job(entry, owner=body.get("token"), owner_name=body.get("name"))
+        except ValueError:
+            job, err = None, "inválida"
+        if job:
+            added += 1
+        else:
+            skipped += 1
+    return jsonify(added=added, skipped=skipped)
 
 
 @app.get("/api/queue")
@@ -372,6 +408,39 @@ def lyrics_clear(song_id):
 
 # ---------------------------------------------------------------- capas (iTunes)
 
+_cover_cache = {}  # busca -> capas (a mesma gaveta costuma ser aberta várias vezes)
+IMG_HOSTS = re.compile(r"^https://([a-z0-9-]+\.)*(mzstatic\.com|scdn\.co|spotifycdn\.com)/")
+
+
+def local_img(url):
+    """Capas da Apple/Spotify passam pelo nosso servidor (veja /api/img)."""
+    return f"/api/img?u={quote(url, safe='')}" if url and IMG_HOSTS.match(url) else url
+
+
+@app.get("/api/img")
+def img_proxy():
+    """Miniaturas de capas servidas daqui, com cache em data/_img.
+
+    Os servidores de imagem da Apple usam HTTP/3 (UDP); em algumas redes o navegador fica
+    ~30 s esperando antes de desistir dele. Buscando pelo servidor local, chega na hora."""
+    url = request.args.get("u") or ""
+    if not IMG_HOSTS.match(url):
+        abort(400)
+    folder = os.path.join(pipeline.DATA, "_img")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, hashlib.sha1(url.encode()).hexdigest() + ".jpg")
+    if not os.path.exists(path):
+        try:
+            r = requests.get(url, headers=UA, timeout=15)
+            r.raise_for_status()
+        except Exception:
+            abort(502)
+        with open(path + ".tmp", "wb") as f:
+            f.write(r.content)
+        os.replace(path + ".tmp", path)
+    return send_file(path, mimetype="image/jpeg", max_age=7 * 24 * 3600)
+
+
 def _art(url, size=1000):
     return re.sub(r"/\d+x\d+bb\.", f"/{size}x{size}bb.", url or "")
 
@@ -381,24 +450,35 @@ def covers_search():
     q = (request.args.get("q") or "").strip()
     if not q:
         return jsonify([])
-    seen, out = set(), []
-    for entity in ("song", "album"):
+    if q in _cover_cache:
+        return jsonify(_cover_cache[q])
+
+    def one(entity):
         try:
             r = requests.get("https://itunes.apple.com/search",
                              params={"term": q, "media": "music", "entity": entity, "limit": 25},
                              headers=UA, timeout=15)
             r.raise_for_status()
-            results = r.json().get("results", [])
+            return r.json().get("results", [])
         except Exception:
-            continue
+            return []
+
+    with ThreadPoolExecutor(2) as ex:  # músicas e álbuns ao mesmo tempo
+        groups = list(ex.map(one, ("song", "album")))
+    seen, out = set(), []
+    for results in groups:
         for item in results:
             url = item.get("artworkUrl100")
             if not url or url in seen:
                 continue
             seen.add(url)
-            out.append({"thumb": _art(url, 300), "full": _art(url, 1000),
+            # miniatura em 200 px: tamanho que o iTunes já tem pronto no cache deles
+            out.append({"thumb": local_img(_art(url, 200)), "full": _art(url, 1000),
                         "album": item.get("collectionName"), "artist": item.get("artistName")})
-    return jsonify(out[:30])
+    out = out[:30]
+    if out:
+        _cover_cache[q] = out
+    return jsonify(out)
 
 
 @app.post("/api/songs/<song_id>/cover")
@@ -424,7 +504,7 @@ def cover_remove(song_id):
     path = os.path.join(pipeline.song_dir(song_id), "cover.jpg")
     if os.path.exists(path):
         os.remove(path)
-    return jsonify(public_song(pipeline.update_song(song_id, {"cover": None, "cover_url": None})))
+    return jsonify(public_song(pipeline.update_song(song_id, {"cover": None, "cover_url": None, "cover_tried": True})))
 
 
 # ---------------------------------------------------------------- clipe de fundo
@@ -458,6 +538,33 @@ def video_remove(song_id):
 
 
 # ---------------------------------------------------------------- MIDI
+
+@app.get("/api/youtube")
+def youtube_info():
+    return jsonify(pipeline.youtube_status())
+
+
+@app.post("/api/youtube/cookies")
+def youtube_cookies():
+    """Recebe o cookies.txt (formato Netscape) exportado do navegador logado no YouTube."""
+    if not is_admin():
+        abort(403)
+    text = (request.get_json(force=True).get("text") or "").replace("\r\n", "\n")
+    if "youtube.com" not in text or "\t" not in text:
+        return jsonify(error="Esse arquivo não parece um cookies.txt do YouTube."), 400
+    with open(pipeline.cookies_file(), "w", encoding="utf-8") as f:
+        f.write(text if text.startswith("# Netscape") else "# Netscape HTTP Cookie File\n" + text)
+    return jsonify(pipeline.youtube_status())
+
+
+@app.delete("/api/youtube/cookies")
+def youtube_cookies_remove():
+    if not is_admin():
+        abort(403)
+    if os.path.exists(pipeline.cookies_file()):
+        os.remove(pipeline.cookies_file())
+    return jsonify(pipeline.youtube_status())
+
 
 @app.get("/api/midi/devices")
 def midi_devices():

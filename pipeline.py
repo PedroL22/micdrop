@@ -18,9 +18,11 @@ import threading
 import time
 import uuid
 
+import requests
 import yt_dlp
 
 import lyrics
+import spotify
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DATA = os.path.join(ROOT, "data")
@@ -136,6 +138,46 @@ def guess_artist_title(info):
     return channel, clean
 
 
+# ---------------------------------------------------------------- acesso ao YouTube
+
+BLOCKED = re.compile(r"(?i)sign in to confirm|not a bot|http error 429|too many requests|http error 403")
+
+
+def cookies_file():
+    """cookies.txt do YouTube enviado nas configurações (opcional, evita bloqueios)."""
+    return os.path.join(DATA, "_youtube_cookies.txt")
+
+
+def js_runtime():
+    """O YouTube exige um interpretador de JavaScript para liberar os vídeos (yt-dlp + yt-dlp-ejs)."""
+    for name in ("deno", "node", "bun"):
+        path = shutil.which(name)
+        if path:
+            return name, path
+    return None, None
+
+
+def _ydl(opts):
+    """yt-dlp com as opções de sempre: JavaScript, cookies, novas tentativas e pedidos espaçados."""
+    o = {"retries": 5, "extractor_retries": 3, "fragment_retries": 5,
+         "sleep_interval_requests": 0.4, **opts}
+    name, path = js_runtime()
+    if name and name != "deno":  # o deno já é usado por padrão
+        o["js_runtimes"] = {name: {"path": path}}
+    if os.path.exists(cookies_file()):
+        o["cookiefile"] = cookies_file()
+    return yt_dlp.YoutubeDL(o)
+
+
+_cooldown_until = 0.0  # o YouTube pediu uma pausa: a fila espera até esse horário
+
+
+def youtube_status():
+    name, _ = js_runtime()
+    return {"cookies": os.path.exists(cookies_file()), "js_runtime": name,
+            "cooldown_until": _cooldown_until if _cooldown_until > time.time() else None}
+
+
 def thumb_url(video_id):
     return f"https://i.ytimg.com/vi/{video_id}/mqdefault.jpg"
 
@@ -148,7 +190,7 @@ def search_youtube(query, limit=5):
             "extract_flat": "in_playlist"}
     is_url = query.startswith("http") or "youtu" in query
     target = query if is_url else f"ytsearch{int(limit)}:{query}"
-    with yt_dlp.YoutubeDL(opts) as ydl:
+    with _ydl(opts) as ydl:
         info = ydl.extract_info(target, download=False)
     entries = info.get("entries") if "entries" in info else [info]
     results = []
@@ -166,6 +208,111 @@ def search_youtube(query, limit=5):
     return results[:limit] if not is_url else results[:1]
 
 
+PLAYLIST_ID = re.compile(r"[?&]list=([A-Za-z0-9_-]+)")
+
+
+def youtube_playlist_id(text):
+    """Id da playlist num link do YouTube (ignora os "mix" automáticos, que não têm fim)."""
+    m = PLAYLIST_ID.search(text or "")
+    if not m or m.group(1).startswith("RD"):
+        return None
+    return m.group(1)
+
+
+def youtube_playlist(list_id, limit=300):
+    opts = {"quiet": True, "no_warnings": True, "skip_download": True,
+            "extract_flat": "in_playlist", "playlistend": limit}
+    with _ydl(opts) as ydl:
+        info = ydl.extract_info(f"https://www.youtube.com/playlist?list={list_id}", download=False)
+    items = []
+    for e in info.get("entries") or []:
+        vid = e.get("id")
+        if not vid or not VIDEO_ID_RE.match(vid) or e.get("title") in ("[Private video]", "[Deleted video]"):
+            continue
+        items.append({"id": vid, "title": e.get("title") or "", "duration": e.get("duration") or 0,
+                      "channel": e.get("channel") or e.get("uploader") or "", "thumbnail": thumb_url(vid)})
+    return {"title": info.get("title") or "Playlist", "items": items}
+
+
+def resolve_query(q, limit=5):
+    """O que mostrar para o texto digitado: busca, um vídeo, playlist do YouTube ou link do Spotify."""
+    q = (q or "").strip()
+    sp = spotify.parse_link(q)
+    if sp:
+        kind, sid = sp
+        data = spotify.fetch(kind, sid)
+        items = [{
+            "id": None,
+            "title": t["title"],
+            "channel": ", ".join(t["artists"]),
+            "duration": t["duration"],
+            "thumbnail": t["cover"],
+            "preview": t["preview"],
+            "spotify": {"id": t["spotify_id"], "title": t["title"], "artist": t["artist"],
+                        "duration": t["duration"], "cover": t["cover"]},
+        } for t in data["tracks"]]
+        return {"kind": "video" if kind == "track" else "playlist", "source": "spotify",
+                "title": data["title"], "cover": data["cover"], "items": items,
+                "truncated": data["maybe_truncated"]}
+    list_id = youtube_playlist_id(q) if ("youtu" in q or q.startswith("http")) else None
+    if list_id:
+        data = youtube_playlist(list_id)
+        return {"kind": "playlist", "source": "youtube", "title": data["title"],
+                "cover": data["items"][0]["thumbnail"] if data["items"] else None,
+                "items": data["items"], "truncated": False}
+    items = search_youtube(q, limit)
+    is_url = q.startswith("http") or "youtu" in q
+    return {"kind": "video" if is_url else "search", "source": "youtube", "title": None,
+            "items": items, "truncated": False}
+
+
+def find_on_youtube(title, artist, duration, how_many=4):
+    """Acha no YouTube a faixa de uma música do Spotify: mesmo nome e a mesma duração.
+
+    Devolve os melhores candidatos, do mais provável ao menos (se um estiver bloqueado, tenta o próximo)."""
+    want = lyrics._norm(lyrics.core_title(title))
+    scored, seen = [], set()
+    best, best_score = None, None
+    for q in (f"{artist} {lyrics.core_title(title)}", f"{artist} {lyrics.core_title(title)} audio"):
+        try:
+            results = search_youtube(q, 8)
+        except Exception:
+            continue
+        for r in results:
+            if NOT_RADIO.search(r["title"]) and not NOT_RADIO.search(title):
+                # ao vivo, cover, remix... (a não ser que a própria faixa seja assim)
+                if not re.search(r"(?i)clipe|music video|official video", r["title"]):
+                    continue
+            if want and want not in lyrics._norm(r["title"]):
+                continue
+            diff = abs((r["duration"] or 0) - duration) if duration else 0
+            if duration and diff > 60:
+                continue  # nada parecido
+            score = diff + (0 if lyrics._norm(artist) in lyrics._norm(r["channel"] + r["title"]) else 5)
+            if r["id"] not in seen:
+                seen.add(r["id"])
+                scored.append((score, r))
+            if best_score is None or score < best_score:
+                best, best_score = r, score
+        if best and best_score <= 2 and len(scored) >= how_many:
+            break
+    return [r for _, r in sorted(scored, key=lambda x: x[0])[:how_many]]
+
+
+SPOTIFY_PREVIEW = re.compile(r"^https://p\.scdn\.co/mp3-preview/[A-Za-z0-9]+")
+
+
+def preview_spotify(url, seconds=5):
+    """5 s do meio do trecho de 30 s que o Spotify oferece (cacheado)."""
+    if not SPOTIFY_PREVIEW.match(url or ""):
+        raise ValueError("endereço inválido")
+    out = os.path.join(PREVIEWS, "sp_" + url.rsplit("/", 1)[-1][:40] + ".mp3")
+    if not (os.path.exists(out) and os.path.getsize(out) > 0):
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", "12", "-i", url, "-t", str(seconds),
+                        "-vn", "-ac", "2", "-c:a", "libmp3lame", "-b:a", "160k", out], check=True, timeout=60)
+    return out
+
+
 def preview_clip(video_id, seconds=5):
     """Corta um trecho do meio da música (cacheado em data/_previews)."""
     song_dir(video_id)  # valida o id
@@ -173,7 +320,7 @@ def preview_clip(video_id, seconds=5):
     if os.path.exists(out) and os.path.getsize(out) > 0:
         return out
     opts = {"quiet": True, "no_warnings": True, "format": "bestaudio/best"}
-    with yt_dlp.YoutubeDL(opts) as ydl:
+    with _ydl(opts) as ydl:
         info = ydl.extract_info(f"https://www.youtube.com/watch?v={video_id}", download=False)
     start = max(0, (info.get("duration") or 60) / 2)
     headers = "".join(f"{k}: {v}\r\n" for k, v in (info.get("http_headers") or {}).items())
@@ -270,7 +417,7 @@ def _fetch_video(folder, source_id, on_progress=None):
     opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "noprogress": True,
             "format": VIDEO_FORMAT, "outtmpl": os.path.join(folder, "video.%(ext)s"),
             "progress_hooks": [hook]}
-    with yt_dlp.YoutubeDL(opts) as ydl:
+    with _ydl(opts) as ydl:
         info = ydl.extract_info(f"https://www.youtube.com/watch?v={source_id}", download=True)
         path = ydl.prepare_filename(info)
     if not os.path.exists(path):  # yt-dlp pode trocar a extensão
@@ -281,7 +428,7 @@ def _fetch_video(folder, source_id, on_progress=None):
 
 def _extract(vid):
     """Dados do vídeo sem baixar."""
-    with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "noplaylist": True}) as ydl:
+    with _ydl({"quiet": True, "no_warnings": True, "noplaylist": True}) as ydl:
         return ydl.extract_info(f"https://www.youtube.com/watch?v={vid}", download=False)
 
 
@@ -359,7 +506,7 @@ def clip_offset(folder, clip_id, audio_id):
     try:
         opts = {"quiet": True, "no_warnings": True, "noplaylist": True, "noprogress": True,
                 "format": "bestaudio/best", "outtmpl": os.path.join(tmp, "a.%(ext)s")}
-        with yt_dlp.YoutubeDL(opts) as ydl:
+        with _ydl(opts) as ydl:
             info = ydl.extract_info(f"https://www.youtube.com/watch?v={clip_id}", download=True)
             src = ydl.prepare_filename(info)
         _to_wav(src, os.path.join(tmp, "clip.wav"))
@@ -393,8 +540,8 @@ def sync_clip(song_id):
     return get_song(song_id)
 
 
-NOT_A_CLIP = re.compile(r"(?i)\b(lyrics?|letra|legendad[oa]|audio|áudio|ao vivo|live|cover|karaok\w*|"
-                        r"instrumental|remix|8d|slowed|reverb|sped up)\b")
+NOT_A_CLIP = re.compile(r"(?i)\b(lyrics?|letra|legendad[oa]|tradu[cç][aã]o|audio|áudio|ao vivo|live|cover|"
+                        r"karaok\w*|instrumental|remix|8d|slowed|reverb|sped up|visuali[sz]er)\b")
 
 
 OFFICIAL = re.compile(r"(?i)(official|oficial|videoclipe|clipe|music video|m/v|\bmv\b)")
@@ -405,7 +552,9 @@ def _pick_clip(info, artist, title, duration):
     vid = info["id"]
     channel = info.get("channel") or info.get("uploader") or ""
     art_track = channel.endswith(" - Topic") or (info.get("description") or "").startswith("Provided to YouTube by")
-    if not art_track:
+    # lyric video, visualizer, "official audio"...: a imagem não é clipe (e às vezes tem a letra escrita)
+    not_clip = art_track or bool(NOT_A_CLIP.search(info.get("title") or ""))
+    if not not_clip:
         return vid
     results, seen = [], set()
     for q in (f"{artist} {title} official music video", f"{artist} {title} clipe oficial"):
@@ -434,6 +583,8 @@ def _pick_clip(info, artist, title, duration):
             score -= 40  # publicado pelo canal do próprio artista
         if best_score is None or score < best_score:
             best, best_score = r["id"], score
+    if best == vid and not_clip:
+        return None  # sem clipe oficial: melhor a capa do que um lyric video de fundo
     return best
 
 
@@ -581,20 +732,31 @@ def public_jobs(token=None, admin=False):
 
 
 def add_job(entry, owner=None, owner_name=None):
-    vid = entry["id"]
-    song_dir(vid)
+    """Põe uma música na fila. `entry` tem o id do YouTube ou, vindo do Spotify, `spotify`
+    (nome, artista e duração): o vídeo é procurado no YouTube na hora de processar."""
+    vid = entry.get("id")
+    sp = entry.get("spotify") or None
+    if vid:
+        song_dir(vid)
+    elif not (sp and sp.get("title")):
+        raise ValueError("música sem id")
     with _lock:
-        if get_song(vid):
+        if vid and get_song(vid):
             return None, "Essa música já está na biblioteca"
-        if any(j["video_id"] == vid for j in _jobs):
+        if vid and any(j["video_id"] == vid for j in _jobs):
             return None, "Essa música já está na fila"
+        if sp and any((j.get("spotify") or {}).get("id") == sp.get("id") for j in _jobs):
+            return None, "Essa música já está na fila"
+        if sp and any(s.get("spotify_id") == sp.get("id") for s in list_songs()):
+            return None, "Essa música já está na biblioteca"
         job = {
             "id": uuid.uuid4().hex[:10],
             "video_id": vid,
+            "spotify": {k: sp.get(k) for k in ("id", "title", "artist", "duration", "cover")} if sp else None,
             "title": entry.get("title") or vid,
             "channel": entry.get("channel") or "",
             "duration": entry.get("duration") or 0,
-            "thumbnail": entry.get("thumbnail") or thumb_url(vid),
+            "thumbnail": entry.get("thumbnail") or (thumb_url(vid) if vid else None),
             "owner": owner,
             "owner_name": (owner_name or "")[:30],
             "status": "queued",
@@ -625,7 +787,7 @@ def remove_job(job_id):
             proc.kill()
         _jobs.remove(job)
         _save_queue()
-        if job["status"] != "done":
+        if job["status"] != "done" and job.get("video_id") and not get_song(job["video_id"]):
             shutil.rmtree(os.path.join(DATA, job["video_id"]), ignore_errors=True)
         return True
 
@@ -634,7 +796,13 @@ def retry_job(job_id):
     with _lock:
         job = find_job(job_id)
         if job and job["status"] == "error":
-            job.update(status="queued", stage="Na fila", progress=0.0, error=None)
+            job.update(status="queued", stage="Na fila", progress=0.0, error=None, blocked=0)
+            if job.get("spotify"):
+                # faixa do Spotify: procura de novo (o vídeo escolhido antes pode estar bloqueado)
+                vid = job.get("video_id")
+                if vid and not get_song(vid):
+                    shutil.rmtree(os.path.join(DATA, vid), ignore_errors=True)
+                job["video_id"] = None
             _save_queue()
             _wake.set()
             return True
@@ -669,7 +837,7 @@ def _download(job, folder, vid=None):
         "outtmpl": os.path.join(folder, "source.%(ext)s"),
         "progress_hooks": [hook],
     }
-    with yt_dlp.YoutubeDL(opts) as ydl:
+    with _ydl(opts) as ydl:
         info = ydl.extract_info(f"https://www.youtube.com/watch?v={vid}", download=True)
         src = ydl.prepare_filename(info)
     original = os.path.join(folder, "original.flac")
@@ -743,13 +911,48 @@ def _separate(job, folder):
     return result
 
 
+class AlreadyHave(Exception):
+    """A faixa do Spotify caiu num vídeo que já está na biblioteca ou na fila."""
+
+
+def _resolve_spotify(job):
+    sp = job["spotify"]
+    _set(job, status="running", stage="Procurando no YouTube...", progress=0.0)
+    candidates = find_on_youtube(sp["title"], sp["artist"], sp.get("duration") or 0)
+    if not candidates:
+        raise RuntimeError("Não achei essa música no YouTube")
+    last_error = None
+    for found in candidates:
+        vid = found["id"]
+        with _lock:
+            if get_song(vid) or any(j is not job and j["video_id"] == vid for j in _jobs):
+                raise AlreadyHave(vid)
+        try:
+            job["_info"] = _extract(vid)  # alguns vídeos pedem login: aí tenta o próximo
+        except Exception as exc:
+            print(f"[spotify] {vid} indisponível ({str(exc)[:80]}), tentando o próximo")
+            last_error = exc
+            continue
+        with _lock:
+            job["video_id"] = vid
+            _save_queue()
+        print(f"[spotify] {sp['artist']} - {sp['title']} -> {vid} ({found['title']})")
+        return
+    raise last_error or RuntimeError("Não achei essa música no YouTube")
+
+
 def _process(job):
+    if not job.get("video_id"):
+        _resolve_spotify(job)
     vid = job["video_id"]
     folder = os.path.join(DATA, vid)
     os.makedirs(folder, exist_ok=True)
     _set(job, status="running", stage="Lendo o vídeo...", progress=0.0)
-    info = _extract(vid)
+    info = job.pop("_info", None) or _extract(vid)
     artist, title = guess_artist_title(info)
+    sp = job.get("spotify") or {}
+    if sp.get("title"):  # veio do Spotify: nome e artista oficiais (o vídeo pode ser um lyric video)
+        title, artist = sp["title"], sp.get("artist") or artist
     duration = info.get("duration") or job["duration"]
 
     # letras do LRCLIB: a duração mais comum entre elas é a da versão de rádio (do álbum)
@@ -778,11 +981,20 @@ def _process(job):
     item = lyrics.pick_best(cands, artist, title, duration, max_diff=4) or         lyrics.pick_best(cands, artist, title, duration, max_diff=8)
     if item:
         lyr = lyrics.build(item)
-        title, artist = lyrics.names_for(item, title, artist)
+        if not sp.get("title"):
+            title, artist = lyrics.names_for(item, title, artist)
         title = clean_title(JUNK.sub("", title).strip(), artist)
 
     _set(job, stage="Baixando a música...", progress=0.0)
-    audio_info = _download(job, folder, audio_id)
+    try:
+        audio_info = _download(job, folder, audio_id)
+    except Exception as exc:
+        if audio_id == vid or not BLOCKED.search(str(exc)):
+            raise
+        # a versão de rádio está bloqueada: usa o áudio do próprio vídeo
+        print(f"[radio] {audio_id} bloqueado, usando o áudio de {vid}")
+        audio_id = vid
+        audio_info = _download(job, folder, audio_id)
     duration = audio_info.get("duration") or duration
 
     # clipe de fundo: baixa (e acha onde a música começa nele) enquanto a placa de vídeo trabalha
@@ -794,6 +1006,9 @@ def _process(job):
                 clip_id = vid  # o vídeo que a pessoa escolheu
             else:
                 clip_id = _pick_clip(info, artist, title, duration)
+            if not clip_id:
+                print(f"[clipe] {vid}: sem clipe oficial, fica a capa")
+                return
             clip.update(_fetch_video(folder, clip_id))
             off = clip_offset(folder, clip_id, audio_id)
             clip["offset"] = off or 0.0
@@ -829,6 +1044,21 @@ def _process(job):
         _set(job, stage="Terminando de baixar o clipe...", progress=0.9)
         clip_thread.join(timeout=600)
     video = dict(clip) if clip.get("status") == "ready" else None
+
+    # capa oficial do álbum: a do Spotify (se veio de lá) ou a do iTunes
+    cover, cover_url = None, None
+    try:
+        cover_url = spotify.big_cover(sp.get("cover")) if sp.get("cover") else lyrics.itunes_artwork(artist, title)
+        if cover_url:
+            r = requests.get(cover_url, headers=lyrics.UA, timeout=20)
+            r.raise_for_status()
+            with open(os.path.join(folder, "cover.jpg"), "wb") as f:
+                f.write(r.content)
+            cover = "cover.jpg"
+    except Exception as exc:
+        print(f"[capa] {vid}: {exc}")
+        cover, cover_url = None, None
+
     meta = {
         "id": vid,
         "title": title or job["title"],
@@ -837,12 +1067,15 @@ def _process(job):
         "channel": info.get("channel") or job["channel"],
         "duration": duration,
         "thumbnail": thumb_url(vid),
-        "cover": None,
+        "cover": cover,
+        "cover_url": cover_url,
+        "cover_v": int(time.time()) if cover else None,
         "key": res.get("key", "C"),
         "scale": res.get("scale", "Major"),
         "lyrics": lyr,
         "video": video,
         "audio_source": audio_id,
+        "spotify_id": (job.get("spotify") or {}).get("id"),
         "offset": 0.0,
         "settings": {"video_offset": (video or {}).get("offset", 0.0)},
         "owner": job.get("owner"),
@@ -853,7 +1086,11 @@ def _process(job):
 
 
 def _worker():
+    global _cooldown_until
     while True:
+        if time.time() < _cooldown_until:  # pausa pedida pelo YouTube
+            time.sleep(5)
+            continue
         with _lock:
             job = next((j for j in _jobs if j["status"] == "queued"), None)
         if job is None:
@@ -868,12 +1105,65 @@ def _worker():
                     _save_queue()
         except Cancelled:
             pass
-        except Exception as exc:
-            print(f"[pipeline] erro em {job['video_id']}: {exc}")
+        except AlreadyHave as exc:
+            print(f"[pipeline] {job['title']}: já tenho ({exc}), tirando da fila")
             with _lock:
                 if job in _jobs:
-                    job.update(status="error", stage="Erro", error=str(exc)[:400])
+                    _jobs.remove(job)
                     _save_queue()
+        except Exception as exc:
+            print(f"[pipeline] erro em {job.get('video_id') or job['title']}: {exc}")
+            with _lock:
+                if job not in _jobs:
+                    continue
+                if BLOCKED.search(str(exc)) and job.get("blocked", 0) < 4:
+                    # o YouTube bloqueou por excesso de pedidos: espera e tenta de novo sozinho
+                    job["blocked"] = job.get("blocked", 0) + 1
+                    wait = 5 * 60 * job["blocked"]
+                    _cooldown_until = time.time() + wait
+                    when = time.strftime("%H:%M", time.localtime(_cooldown_until))
+                    job.update(status="queued", progress=0.0, error=None,
+                               stage=f"O YouTube pediu uma pausa. Tentando de novo às {when}...")
+                    _save_queue()
+                    continue
+                msg = re.sub(r"\x1b\[[0-9;]*m", "", str(exc)).replace("ERROR: ", "")  # sem cores do terminal
+                if BLOCKED.search(msg):
+                    msg = ("O YouTube está bloqueando os downloads deste computador. Espere um pouco ou "
+                           "envie os cookies do YouTube em Configurações.")
+                job.update(status="error", stage="Erro", error=msg[:400])
+                _save_queue()
+
+
+def official_cover(song_id, artist, title, spotify_id=None):
+    """Baixa a capa oficial do álbum (Spotify ou iTunes) para a música. Retorna o endereço usado."""
+    url = None
+    if spotify_id:
+        url = spotify.big_cover(spotify.track_images([spotify_id]).get(spotify_id))
+    url = url or lyrics.itunes_artwork(artist, title)
+    if not url:
+        return None
+    r = requests.get(url, headers=lyrics.UA, timeout=20)
+    r.raise_for_status()
+    with open(os.path.join(song_dir(song_id), "cover.jpg"), "wb") as f:
+        f.write(r.content)
+    update_song(song_id, {"cover": "cover.jpg", "cover_url": url, "cover_v": int(time.time())})
+    return url
+
+
+def _backfill_covers():
+    """Músicas antigas sem capa: busca a oficial (em vez da miniatura do vídeo, às vezes um lyric video)."""
+    for meta in list_songs():
+        if meta.get("cover") or meta.get("cover_tried"):
+            continue
+        url = None
+        try:
+            url = official_cover(meta["id"], meta.get("artist") or "", meta.get("title") or "", meta.get("spotify_id"))
+            print(f"[capa] {meta['id']}: {'capa oficial ' + url if url else 'sem capa oficial'}")
+        except Exception as exc:
+            print(f"[capa] {meta['id']}: {exc}")
+        if not url:
+            update_song(meta["id"], {"cover_tried": True})  # não tenta de novo a cada início
+        time.sleep(0.5)
 
 
 def start(config):
@@ -897,3 +1187,4 @@ def start(config):
             if (meta.get("video") or {}).get("status") == "downloading":
                 _video_state(meta["id"], status="error", error="Download interrompido; tente de novo")
     threading.Thread(target=_worker, daemon=True, name="pipeline").start()
+    threading.Thread(target=_backfill_covers, daemon=True, name="covers").start()

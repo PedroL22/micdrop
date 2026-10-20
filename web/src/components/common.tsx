@@ -118,8 +118,8 @@ export function Confirm({
 }
 
 /** Miniatura com proporção fixa que aparece suavemente. */
-export function Thumb({ src, className, alt = "" }: { src: string; className?: string; alt?: string }) {
-  return <ImageThumbnail src={src} alt={alt} containerClassName={cn("shrink-0 rounded-md", className)} />
+export function Thumb({ src, className, alt = "", loading }: { src: string; className?: string; alt?: string; loading?: "eager" | "lazy" }) {
+  return <ImageThumbnail src={src} alt={alt} loading={loading} containerClassName={cn("shrink-0 rounded-md", className)} />
 }
 
 export function SectionTitle({ children, aside }: { children: ReactNode; aside?: ReactNode }) {

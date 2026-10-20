@@ -1,9 +1,10 @@
-import { Check, Clapperboard, FileText, Image, Mic, MoreVertical, Music2, Trash2 } from "lucide-react"
+import { Check, Clapperboard, FileText, Image, Mic, MoreVertical, Music2, Pencil, Trash2 } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
 import { Confirm, PreviewButton } from "@/components/common"
 import { ImageThumbnail } from "@/components/ImageThumbnail"
+import { RenameDialog } from "@/components/RenameDialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -64,6 +65,7 @@ function SongBadges({ song }: { song: Song }) {
 /** Prévia + menu "⋮" (cantar, trocar letra/capa/clipe, apagar). */
 function SongActions({ song, onChange }: { song: Song; onChange: () => void }) {
   const [confirm, setConfirm] = useState(false)
+  const [rename, setRename] = useState(false)
 
   async function remove() {
     try {
@@ -88,6 +90,9 @@ function SongActions({ song, onChange }: { song: Song; onChange: () => void }) {
           <DropdownMenuItem onSelect={() => openSong(song)}>
             <Mic /> Cantar
           </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => setRename(true)}>
+            <Pencil /> Renomear
+          </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => openSong(song, "lyrics")}>
             <FileText /> Trocar letra
           </DropdownMenuItem>
@@ -107,6 +112,7 @@ function SongActions({ song, onChange }: { song: Song; onChange: () => void }) {
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+      <RenameDialog song={song} open={rename} onOpenChange={setRename} onSaved={onChange} />
       <Confirm
         open={confirm}
         onOpenChange={setConfirm}

@@ -11,7 +11,7 @@ import { Progress } from "@/components/ui/progress"
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { api, cleanTitle, fmtTime } from "@/lib/api"
+import { api, cleanTitle, fmtTime, searchApi } from "@/lib/api"
 import type { CoverResult, LyricsResult, SearchResult, Song } from "@/lib/types"
 
 export type PickerTab = "lyrics" | "cover" | "clip"
@@ -252,7 +252,7 @@ function CoverTab({ song, onSong }: { song: Song; onSong: (s: Song) => void }) {
                 aria-pressed={inUse}
                 className={`relative overflow-hidden rounded-md ring-primary transition hover:ring-2 focus-visible:ring-2 ${inUse ? "ring-3" : ""}`}
               >
-                <ImageThumbnail src={it.thumb} containerClassName="aspect-square w-full" />
+                <ImageThumbnail src={it.thumb} containerClassName="aspect-square w-full" loading="eager" />
                 {inUse && (
                   <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-primary py-0.5 text-[11px] font-semibold text-primary-foreground">
                     <Check className="size-3" /> Em uso
@@ -276,7 +276,7 @@ function CoverTab({ song, onSong }: { song: Song; onSong: (s: Song) => void }) {
 
 function ClipTab({ song, onSong }: { song: Song; onSong: (s: Song) => void }) {
   const s = useSearch<SearchResult>(`${baseQuery(song)} clipe oficial`, q =>
-    api<SearchResult[]>("/api/search?q=" + encodeURIComponent(q)),
+    searchApi(q).then(r => r.items.filter(it => it.id)),
   )
   const v = song.video
 
@@ -342,7 +342,7 @@ function ClipTab({ song, onSong }: { song: Song; onSong: (s: Song) => void }) {
         <ul className="space-y-1.5">
           {(s.items || []).map(it => (
             <li key={it.id} className="flex items-center gap-3 rounded-lg border p-2">
-              <Thumb src={it.thumbnail} className="aspect-video w-24" />
+              <Thumb src={it.thumbnail || ""} className="aspect-video w-24" loading="eager" />
               <div className="min-w-0 flex-1">
                 <p className="line-clamp-2 text-sm font-medium leading-snug">{it.title}</p>
                 <p className="truncate text-xs text-muted-foreground">
@@ -353,7 +353,7 @@ function ClipTab({ song, onSong }: { song: Song; onSong: (s: Song) => void }) {
                 size="sm"
                 variant={v?.source === it.id ? "secondary" : "default"}
                 disabled={v?.status === "downloading" || (v?.source === it.id && v.status === "ready")}
-                onClick={() => use(it.id)}
+                onClick={() => use(it.id!)}
               >
                 {v?.source === it.id && v.status === "ready" ? "Em uso" : "Usar"}
               </Button>

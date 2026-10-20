@@ -3,6 +3,7 @@ import { Fragment, useEffect, useLayoutEffect, useRef, type RefObject } from "re
 import type { LyricLine } from "@/lib/types"
 import { cn } from "@/lib/utils"
 import type { AudioEngine } from "./engine"
+import { wordTimes } from "./wordTiming"
 
 type Props = {
   lines: LyricLine[]
@@ -26,22 +27,6 @@ function currentIndex(lines: LyricLine[], t: number) {
     } else hi = mid - 1
   }
   return ans
-}
-
-// Sem o tempo de cada palavra: reparte o tempo da linha pelo tamanho das palavras
-function estimateWords(lines: LyricLine[], i: number): [number, number][] {
-  const words = lines[i].text.trim().split(/\s+/)
-  const chars = words.reduce((n, w) => n + w.length, 0)
-  const t0 = lines[i].t ?? 0
-  const next = i + 1 < lines.length ? (lines[i + 1].t ?? t0 + 6) : t0 + 6
-  const end = Math.max(t0 + 0.4, Math.min(next - 0.2, t0 + 0.6 + chars * 0.08))
-  let t = t0
-  return words.map(w => {
-    const d = ((end - t0) * Math.max(1, w.length)) / Math.max(1, chars)
-    const span: [number, number] = [t, t + d]
-    t += d
-    return span
-  })
 }
 
 /**
@@ -91,9 +76,10 @@ export function LyricsView({ lines, synced, engine, offsetRef, armed, big, onLin
         st.wipe = idx
       }
       if (idx < 0) return
-      let times = lines[idx].w
+      // tempos ajustados para caber na linha (veja wordTiming.ts); calculados uma vez por linha
+      let times = st.estimates.get(idx)
       if (!times) {
-        times = st.estimates.get(idx) || estimateWords(lines, idx)
+        times = wordTimes(lines, idx)
         st.estimates.set(idx, times)
       }
       const spans = els[idx].children as HTMLCollectionOf<HTMLElement>

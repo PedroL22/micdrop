@@ -15,11 +15,13 @@ import {
   Type,
   Volume2,
   Wand2,
+  Pencil,
 } from "lucide-react"
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { toast } from "sonner"
 
 import { IconButton } from "@/components/common"
+import { RenameDialog } from "@/components/RenameDialog"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
@@ -94,6 +96,7 @@ export default function Player({ songId }: { songId: string }) {
   const [fs, setFs] = useState(false)
   const [showControls, setShowControls] = useState(false)
   const [armed, setArmed] = useState(false)
+  const [renaming, setRenaming] = useState(false)
   const [picker, setPicker] = useState<{ open: boolean; tab: PickerTab }>({ open: false, tab: "lyrics" })
   const offsetRef = useRef(0)
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -418,9 +421,19 @@ export default function Player({ songId }: { songId: string }) {
         <IconButton label="Voltar para a biblioteca" variant="ghost" onClick={() => goBack("/")}>
           <ArrowLeft />
         </IconButton>
-        <div className="min-w-0 flex-1">
-          <h1 className="truncate text-xl font-bold">{cleanTitle(song.title, song.artist)}</h1>
-          <p className="truncate text-sm text-muted-foreground">{song.artist || song.channel}</p>
+        <div className="group/title flex min-w-0 flex-1 items-center gap-1">
+          <div className="min-w-0">
+            <h1 className="truncate text-xl font-bold">{cleanTitle(song.title, song.artist)}</h1>
+            <p className="truncate text-sm text-muted-foreground">{song.artist || song.channel}</p>
+          </div>
+          <IconButton
+            label="Renomear"
+            size="icon-sm"
+            className="opacity-0 transition-opacity group-hover/title:opacity-100 focus-visible:opacity-100"
+            onClick={() => setRenaming(true)}
+          >
+            <Pencil />
+          </IconButton>
         </div>
         <IconButton label="Trocar letra" variant="outline" onClick={() => openPicker("lyrics")}>
           <FileText />
@@ -672,6 +685,12 @@ export default function Player({ songId }: { songId: string }) {
         Espaço: tocar/pausar · F: tela cheia · ← →: 5 segundos · Clique numa linha para pular até ela
       </p>
 
+      <RenameDialog
+        song={song}
+        open={renaming}
+        onOpenChange={setRenaming}
+        onSaved={s => setSong(cur => (cur ? { ...cur, title: s.title, artist: s.artist } : s))}
+      />
       <Pickers
         song={song}
         open={picker.open}

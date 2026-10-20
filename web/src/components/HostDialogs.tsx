@@ -14,7 +14,9 @@ import {
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { YouTubeSettings } from "@/components/YouTubeSettings"
 import { api } from "@/lib/api"
 import type { Info } from "@/lib/types"
 
@@ -90,19 +92,29 @@ export function MidiDialog({ info, onChange }: { info?: Info; onChange: () => vo
     <Dialog>
       <Tooltipped>
         <DialogTrigger asChild>
-          <Button variant="outline" size="icon-lg" aria-label="Auto-Tune (MIDI)">
+          <Button variant="outline" size="icon-lg" aria-label="Configurações">
             <Settings2 />
           </Button>
         </DialogTrigger>
       </Tooltipped>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Auto-Tune por MIDI</DialogTitle>
-          <DialogDescription>
-            Ao abrir uma música, o app manda a nota e a escala dela para o Auto-Tune (por exemplo, no Reaper).
-          </DialogDescription>
+          <DialogTitle>Configurações</DialogTitle>
+          <DialogDescription>Acesso ao YouTube e envio do tom para o Auto-Tune.</DialogDescription>
         </DialogHeader>
+        <Tabs defaultValue="youtube">
+          <TabsList className="w-full">
+            <TabsTrigger value="youtube">YouTube</TabsTrigger>
+            <TabsTrigger value="midi">Auto-Tune (MIDI)</TabsTrigger>
+          </TabsList>
+          <TabsContent value="youtube" className="pt-2">
+            <YouTubeSettings />
+          </TabsContent>
+          <TabsContent value="midi" className="pt-2">
         <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Ao abrir uma música, o app manda a nota e a escala dela para o Auto-Tune (por exemplo, no Reaper).
+          </p>
           <div className="space-y-2">
             <Label>Dispositivo MIDI</Label>
             <Select value={device || NONE} onValueChange={choose}>
@@ -136,17 +148,18 @@ export function MidiDialog({ info, onChange }: { info?: Info; onChange: () => vo
             </div>
           </div>
         </div>
+          </TabsContent>
+        </Tabs>
       </DialogContent>
     </Dialog>
   )
 }
 
-
 function Tooltipped({ children }: { children: React.ReactNode }) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>{children}</TooltipTrigger>
-      <TooltipContent>Auto-Tune (MIDI)</TooltipContent>
+      <TooltipContent>Configurações</TooltipContent>
     </Tooltip>
   )
 }

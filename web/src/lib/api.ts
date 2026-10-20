@@ -57,3 +57,9 @@ export function wordsReady(s: Song) {
   const l = s.lyrics
   return !!(l && l.synced && l.words_source && l.align?.status !== "error")
 }
+
+/** Busca/links. Aceita também o formato antigo (lista simples) de servidores ainda não reiniciados. */
+export async function searchApi(q: string): Promise<import("./types").SearchResponse> {
+  const r = await api<import("./types").SearchResponse | import("./types").SearchResult[]>("/api/search?q=" + encodeURIComponent(q))
+  return Array.isArray(r) ? { kind: "search", source: "youtube", title: null, items: r, truncated: false } : r
+}
