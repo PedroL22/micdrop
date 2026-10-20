@@ -22,6 +22,7 @@ import requests
 import yt_dlp
 
 import lyrics
+import romanize
 import spotify
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -1061,8 +1062,8 @@ def _process(job):
 
     meta = {
         "id": vid,
-        "title": title or job["title"],
-        "artist": artist or job["channel"],
+        "title": romanize.name(title or job["title"]),
+        "artist": romanize.name(artist or job["channel"]),
         "video_title": info.get("title") or job["title"],
         "channel": info.get("channel") or job["channel"],
         "duration": duration,
@@ -1166,6 +1167,26 @@ def _backfill_covers():
         time.sleep(0.5)
 
 
+def _romanize_existing():
+    """Músicas já na biblioteca com letra em japonês/coreano: romaniza e refaz as palavras."""
+    for meta in list_songs():
+        changes = {}
+        lyr = meta.get("lyrics")
+        if lyr and romanize.lyrics(lyr):
+            lyr.pop("align", None)
+            changes["lyrics"] = lyr
+        for key in ("title", "artist"):
+            new = romanize.name(meta.get(key) or "")
+            if new and new != meta.get(key):
+                changes[key] = new
+        if not changes:
+            continue
+        update_song(meta["id"], changes)
+        print(f"[romaji] {meta['id']}: {changes.get('title') or meta.get('title')}")
+        if "lyrics" in changes and lyr.get("synced"):
+            start_word_sync(meta["id"])
+
+
 def start(config):
     _config.update(config)
     with _lock:
@@ -1188,3 +1209,4 @@ def start(config):
                 _video_state(meta["id"], status="error", error="Download interrompido; tente de novo")
     threading.Thread(target=_worker, daemon=True, name="pipeline").start()
     threading.Thread(target=_backfill_covers, daemon=True, name="covers").start()
+    threading.Thread(target=_romanize_existing, daemon=True, name="romaji").start()

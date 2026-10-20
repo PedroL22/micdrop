@@ -9,3 +9,6 @@ python-rtmidi
 segno
 requests
 audioread
+cutlet
+fugashi[unidic-lite]
+korean-romanizer

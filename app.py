@@ -25,6 +25,7 @@ from flask import Flask, abort, jsonify, request, send_file, send_from_directory
 import lyrics
 import midi_control
 import pipeline
+import romanize
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(ROOT, "config.json")
@@ -381,7 +382,8 @@ def lyrics_use(song_id):
     lyr = lyrics.build(item)
     cur = pipeline.get_song(song_id)
     title, artist = lyrics.names_for(item, cur.get("title") or "", cur.get("artist") or "")
-    title = pipeline.clean_title(pipeline.JUNK.sub("", title).strip(), artist)
+    title = romanize.name(pipeline.clean_title(pipeline.JUNK.sub("", title).strip(), artist))
+    artist = romanize.name(artist)
     s = pipeline.update_song(song_id, {"lyrics": lyr, "offset": 0.0, "title": title, "artist": artist})
     if lyr["synced"] and not lyr.get("words_source"):
         s = pipeline.start_word_sync(song_id)

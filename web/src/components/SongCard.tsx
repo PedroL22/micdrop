@@ -63,7 +63,9 @@ function SongBadges({ song }: { song: Song }) {
 }
 
 /** Prévia + menu "⋮" (cantar, trocar letra/capa/clipe, apagar). */
-function SongActions({ song, onChange }: { song: Song; onChange: () => void }) {
+type MenuProps = { menuOpen: boolean; setMenuOpen: (open: boolean) => void }
+
+function SongActions({ song, onChange, menuOpen, setMenuOpen }: { song: Song; onChange: () => void } & MenuProps) {
   const [confirm, setConfirm] = useState(false)
   const [rename, setRename] = useState(false)
 
@@ -80,7 +82,7 @@ function SongActions({ song, onChange }: { song: Song; onChange: () => void }) {
   return (
     <>
       <PreviewButton id={`song-${song.id}`} src={`/media/${song.id}/original.flac`} start={(song.duration || 60) / 2} variant="ghost" />
-      <DropdownMenu>
+      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="icon" aria-label="Mais opções">
             <MoreVertical />
@@ -125,10 +127,22 @@ function SongActions({ song, onChange }: { song: Song; onChange: () => void }) {
 }
 
 /** Modo grade: cartão grande com a imagem. */
+/** Clique direito no cartão abre o menu ⋮ (em vez do menu do navegador). */
+function useContextMenu() {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const onContextMenu = (ev: React.MouseEvent) => {
+    ev.preventDefault()
+    setMenuOpen(true)
+  }
+  return { menuOpen, setMenuOpen, onContextMenu }
+}
+
 export function SongCard({ song, onChange, index, animate }: ItemProps) {
   const e = enter(animate, index)
+  const menu = useContextMenu()
   return (
     <Card
+      onContextMenu={menu.onContextMenu}
       className={cn(
         "group gap-0 overflow-hidden py-0 transition-[translate,box-shadow,border-color] duration-300 ease-out hover:-translate-y-1 hover:shadow-xl hover:shadow-primary/10",
         e.className,
@@ -163,7 +177,7 @@ export function SongCard({ song, onChange, index, animate }: ItemProps) {
         <div className="flex min-w-0 flex-1 flex-wrap gap-1.5">
           <SongBadges song={song} />
         </div>
-        <SongActions song={song} onChange={onChange} />
+        <SongActions song={song} onChange={onChange} menuOpen={menu.menuOpen} setMenuOpen={menu.setMenuOpen} />
       </div>
     </Card>
   )
@@ -172,8 +186,10 @@ export function SongCard({ song, onChange, index, animate }: ItemProps) {
 /** Modo lista: uma linha compacta por música. */
 export function SongRow({ song, onChange, index, animate }: ItemProps) {
   const e = enter(animate, index)
+  const menu = useContextMenu()
   return (
     <Card
+      onContextMenu={menu.onContextMenu}
       size="sm"
       className={cn("group flex-row items-center gap-3 px-2.5 py-2 transition-colors duration-200 hover:bg-accent/40", e.className)}
       style={{ ...vt(`song-${song.id}`, "card"), ...e.style }}
@@ -199,7 +215,7 @@ export function SongRow({ song, onChange, index, animate }: ItemProps) {
         <Mic /> Cantar
       </Button>
       <div className="flex">
-        <SongActions song={song} onChange={onChange} />
+        <SongActions song={song} onChange={onChange} menuOpen={menu.menuOpen} setMenuOpen={menu.setMenuOpen} />
       </div>
     </Card>
   )
