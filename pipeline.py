@@ -267,6 +267,28 @@ def resolve_query(q, limit=5):
             "items": items, "truncated": False}
 
 
+def mark_duplicates(items):
+    """Marca nos resultados o que já está na biblioteca ou na fila (o "Adicionar todas" pula)."""
+    songs = [(s["id"], s.get("spotify_id"), song_key(s.get("artist"), s.get("title"))) for s in list_songs()]
+    with _lock:
+        jobs = [(j.get("video_id"), (j.get("spotify") or {}).get("id"), tuple(j["key"]) if j.get("key") else None)
+                for j in _jobs]
+    for it in items:
+        key = entry_key(it)
+        sp_id = (it.get("spotify") or {}).get("id")
+        it["duplicate"] = None
+        for sid, spid, skey in songs:
+            if (it.get("id") and it["id"] == sid) or (sp_id and sp_id == spid) or _same_song(key, skey):
+                it["duplicate"] = "biblioteca"
+                break
+        else:
+            for vid, spid, jkey in jobs:
+                if (it.get("id") and it["id"] == vid) or (sp_id and sp_id == spid) or (jkey and _same_song(key, jkey)):
+                    it["duplicate"] = "fila"
+                    break
+    return items
+
+
 def find_on_youtube(title, artist, duration, how_many=4):
     """Acha no YouTube a faixa de uma música do Spotify: mesmo nome e a mesma duração.
 
@@ -732,6 +754,43 @@ def public_jobs(token=None, admin=False):
         return out
 
 
+# ---------------------------------------------------------------- duplicatas
+
+def song_key(artist, title):
+    """(artista, nome) normalizados: sem "(Official Video)", "ft. X", acentos, pontuação e maiúsculas."""
+    t = lyrics._norm(lyrics.core_title(clean_title(JUNK.sub("", romanize.name(title or "")), artist)))
+    a = lyrics._norm(re.sub(r"(?i)\s*(vevo|official|- topic)$", "", romanize.name(artist or "")))
+    return a, t
+
+
+def entry_key(entry):
+    """Chave de um resultado de busca: do Spotify (nome oficial) ou adivinhada pelo título do vídeo."""
+    sp = entry.get("spotify") or {}
+    if sp.get("title"):
+        return song_key(sp.get("artist"), sp["title"])
+    artist, title = guess_artist_title({"title": entry.get("title") or "", "channel": entry.get("channel") or ""})
+    return song_key(artist, title)
+
+
+def _same_song(k1, k2):
+    (a1, t1), (a2, t2) = k1, k2
+    if not t1 or t1 != t2:
+        return False
+    return not a1 or not a2 or a1 in a2 or a2 in a1  # "Charlie Brown Jr" = "Charlie Brown Jr."
+
+
+def find_duplicate(key, exclude_song=None, exclude_job=None):
+    """"biblioteca", "fila" ou None."""
+    for s in list_songs():
+        if s["id"] != exclude_song and _same_song(key, song_key(s.get("artist"), s.get("title"))):
+            return "biblioteca"
+    with _lock:
+        for j in _jobs:
+            if j is not exclude_job and j.get("key") and _same_song(key, tuple(j["key"])):
+                return "fila"
+    return None
+
+
 def add_job(entry, owner=None, owner_name=None):
     """Põe uma música na fila. `entry` tem o id do YouTube ou, vindo do Spotify, `spotify`
     (nome, artista e duração): o vídeo é procurado no YouTube na hora de processar."""
@@ -750,10 +809,15 @@ def add_job(entry, owner=None, owner_name=None):
             return None, "Essa música já está na fila"
         if sp and any(s.get("spotify_id") == sp.get("id") for s in list_songs()):
             return None, "Essa música já está na biblioteca"
+        key = entry_key(entry)
+        dup = find_duplicate(key)
+        if dup:
+            return None, f"Essa música já está na {dup}"
         job = {
             "id": uuid.uuid4().hex[:10],
             "video_id": vid,
             "spotify": {k: sp.get(k) for k in ("id", "title", "artist", "duration", "cover")} if sp else None,
+            "key": list(key),
             "title": entry.get("title") or vid,
             "channel": entry.get("channel") or "",
             "duration": entry.get("duration") or 0,
@@ -986,6 +1050,11 @@ def _process(job):
             title, artist = lyrics.names_for(item, title, artist)
         title = clean_title(JUNK.sub("", title).strip(), artist)
 
+    job["key"] = list(song_key(artist, title))
+    dup = find_duplicate(tuple(job["key"]), exclude_song=vid, exclude_job=job)
+    if dup:
+        raise AlreadyHave(f"{artist} - {title} já está na {dup}")
+
     _set(job, stage="Baixando a música...", progress=0.0)
     try:
         audio_info = _download(job, folder, audio_id)
@@ -1108,6 +1177,9 @@ def _worker():
             pass
         except AlreadyHave as exc:
             print(f"[pipeline] {job['title']}: já tenho ({exc}), tirando da fila")
+            vid = job.get("video_id")
+            if vid and not get_song(vid):
+                shutil.rmtree(os.path.join(DATA, vid), ignore_errors=True)
             with _lock:
                 if job in _jobs:
                     _jobs.remove(job)
