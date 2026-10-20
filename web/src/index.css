@@ -165,6 +165,18 @@ body { transition: background-color .6s ease; }
     -webkit-background-clip: text; background-clip: text;
 }
 .lyrics-armed .lyric-line { cursor: crosshair; }
+
+/* tradução: pequena, embaixo do verso, sem o preenchimento das palavras */
+.lyric-tr {
+    display: block;
+    margin-top: .15em;
+    font-size: .55em;
+    font-weight: 400;
+    line-height: 1.3;
+    color: rgb(255 255 255 / .62);
+    text-shadow: 0 1px 4px #000c;
+}
+.lyric-line.active .lyric-tr { font-size: .42em; color: rgb(255 255 255 / .8); }
 .lyrics-armed .lyric-line:hover { color: var(--color-primary); }
 
 /* ------------------------------------------------------------ animações (no estilo do 22ai) */

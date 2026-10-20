@@ -26,6 +26,7 @@ import lyrics
 import midi_control
 import pipeline
 import romanize
+import translate
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CONFIG_FILE = os.path.join(ROOT, "config.json")
@@ -127,7 +128,7 @@ def qr():
 
 # Ajustes do player que valem para todas as músicas (ficam em data/_prefs.json)
 PLAYER_DEFAULTS = {"mode": "instrumental", "backing": 1.0, "lead": 0.0, "blur": 0.5,
-                   "brightness": 0.85, "bg": "video", "volume": 1.0}
+                   "brightness": 0.85, "bg": "video", "volume": 1.0, "translate": True}
 PREFS_FILE = os.path.join(pipeline.DATA, "_prefs.json")
 
 
@@ -155,7 +156,9 @@ def prefs_update():
             continue
         if k == "bg" and v not in ("cover", "video"):
             continue
-        if k not in ("mode", "bg"):
+        if k == "translate":
+            v = bool(v)
+        elif k not in ("mode", "bg"):
             v = max(0.0, min(1.0, float(v)))
         player[k] = v
     pipeline._write_json(PREFS_FILE, player)
@@ -541,6 +544,36 @@ def video_remove(song_id):
 
 
 # ---------------------------------------------------------------- MIDI
+
+LANG = re.compile(r"^[a-z]{2,3}(-[A-Za-z]{2,4})?$")
+
+
+@app.get("/api/songs/<song_id>/translation")
+def song_translation(song_id):
+    """Tradução da letra para o idioma pedido (o do navegador), guardada na música."""
+    lang = (request.args.get("lang") or "pt").strip()
+    if not LANG.match(lang):
+        abort(400)
+    s = pipeline.get_song(song_id)
+    if not s:
+        abort(404)
+    lyr = s.get("lyrics")
+    if not lyr or not lyr.get("lines"):
+        return jsonify(lang=lang, lines=None)
+    cache = s.get("translations") or {}
+    hit = cache.get(lang)
+    if hit and hit.get("source") == lyr.get("source"):
+        return jsonify(lang=lang, lines=hit["lines"])
+    # japonês/coreano: traduz do texto original (melhor que do romaji)
+    texts = [l.get("orig") or l.get("text") or "" for l in lyr["lines"]]
+    try:
+        lines = translate.translate_lines(texts, lang)
+    except Exception as exc:
+        return jsonify(error=f"Tradução indisponível agora ({exc})"), 502
+    cache[lang] = {"source": lyr.get("source"), "lines": lines}
+    pipeline.update_song(song_id, {"translations": cache})
+    return jsonify(lang=lang, lines=lines)
+
 
 @app.get("/api/youtube")
 def youtube_info():
